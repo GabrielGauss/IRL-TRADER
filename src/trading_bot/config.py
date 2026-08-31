@@ -50,12 +50,18 @@ def load_settings() -> Settings:
     return Settings()
 
 
-def load_public_data_settings() -> Settings:
-    """Relaxed settings loader for commands that only need public market data (e.g. backtest)."""
+def load_public_data_settings(use_testnet: bool = True) -> Settings:
+    """Relaxed settings loader for commands that only need public market data (e.g. backtest).
+
+    `use_testnet` defaults to True to match the live-trading default, but callers
+    reading historical klines for backtesting typically want mainnet data (testnet
+    history is thin and doesn't reflect real market behavior) and can pass False --
+    this carries no live-trading risk since no order is ever placed with these settings.
+    """
     return Settings.model_construct(
         binance_api_key="",
         binance_api_secret="",
-        use_testnet=True,
+        use_testnet=use_testnet,
         i_understand_live_trading_risk=False,
         max_daily_loss_pct=3.0,
         max_drawdown_pct=10.0,

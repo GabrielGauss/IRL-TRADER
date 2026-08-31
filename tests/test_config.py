@@ -59,3 +59,12 @@ def test_load_public_data_settings_bypasses_credential_validation():
     assert settings.binance_api_key == ""
     assert settings.binance_api_secret == ""
     assert settings.use_testnet is True
+
+
+def test_load_public_data_settings_can_target_mainnet_for_realistic_backtests():
+    # Act
+    settings = load_public_data_settings(use_testnet=False)
+
+    # Assert
+    assert settings.use_testnet is False
+    assert settings.binance_api_key == ""
