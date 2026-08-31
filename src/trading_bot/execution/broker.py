@@ -15,15 +15,13 @@ import itertools
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
 
 import ccxt.async_support as ccxt_async
 
+from trading_bot.exchange.order_side import OrderSide
 
-class OrderSide(str, Enum):
-    BUY = "BUY"
-    SELL = "SELL"
+__all__ = ["Broker", "CcxtBroker", "Fill", "OrderSide", "PaperBroker"]
 
 
 @dataclass(frozen=True)

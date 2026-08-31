@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from enum import Enum
 
 import pandas as pd
 from binance.client import Client
 
 from trading_bot.config import Settings
+from trading_bot.exchange.order_side import OrderSide
+
+__all__ = ["KLINE_COLUMNS", "BinanceClient", "OrderResult", "OrderSide"]
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +34,6 @@ KLINE_COLUMNS = [
     "taker_buy_quote",
     "ignore",
 ]
-
-
-class OrderSide(str, Enum):
-    BUY = "BUY"
-    SELL = "SELL"
 
 
 @dataclass(frozen=True)
