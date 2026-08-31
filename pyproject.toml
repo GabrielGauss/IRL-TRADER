@@ -10,6 +10,7 @@ dependencies = [
     "pandas>=2.2",
     "pandas-ta>=0.3.14b0",
     "ccxt>=4.3",
+    "aiohttp>=3.9",
 ]
 
 [project.scripts]

@@ -1,27 +1,26 @@
 # trading-bot
 
 A Binance spot trading bot with a tested backtest/live-execution path, plus a
-newer set of exchange-agnostic building blocks (signal ingestion, portfolio
-risk, async multi-exchange order routing) that aren't wired into a runnable
-entrypoint yet.
+newer signal-driven, exchange-agnostic async stack (`serve`) with its own
+webhook ingestion, risk engine, order routing, and health/metrics reporting.
 
 ## Two stacks
 
-This repo currently contains two parallel implementations. They don't share
-code except a common `OrderSide` enum, and nothing routes between them yet.
+This repo contains two parallel implementations, now both runnable from the
+CLI. They share persistence (`TradeRepository`) and the `OrderSide` enum but
+otherwise don't share code.
 
-### 1. The proven stack (`config` -> CLI)
+### 1. The proven stack (`config` -> `backtest`/`run`)
 
 Sync, python-binance-based, verified live against real Binance market data
-and a real testnet-style order flow.
+and a real testnet-style order flow. Single strategy (EMA/RSI), single
+exchange (Binance).
 
 ```
 config.Settings -> exchange.BinanceClient -> strategy.EmaRsiStrategy
   -> execution.ExecutionEngine (own RiskLimits/RiskLimitBreached)
   -> persistence.TradeRepository (SQLite)
 ```
-
-Reachable today via the CLI:
 
 ```bash
 trading-bot backtest --symbol BTCUSDT --interval 1h --limit 500
@@ -33,23 +32,40 @@ trading-bot run              # live poll loop (Ctrl+C to stop)
 `Settings` (`USE_TESTNET=false` and `I_UNDERSTAND_LIVE_TRADING_RISK=true`) --
 a single misconfigured variable can't route real orders.
 
-### 2. The component stack (`signals/`, additions to `risk/`, `execution/broker.py`)
+### 2. The component stack (`signals/`, `risk/`, `execution/broker.py`, `runtime/` -> `serve`)
 
-Async, exchange-agnostic (via `ccxt`), built to eventually replace or
-front the proven stack with a signal-driven, multi-venue design. Each piece
-is unit-tested and has been smoke-tested standalone, but **there is no main
-loop or CLI command wiring these together yet** -- that's the next piece of
-work (see Roadmap).
+Async, exchange-agnostic (via `ccxt`), signal-driven: external systems POST
+JSON signals over HTTP rather than the bot computing its own from OHLCV.
 
 ```
-signals.SignalPayload / SignalQueue / SignalIngestor
-  -> risk.signal_to_target_position (-> risk.PortfolioState, DrawdownMonitor, KillSwitch)
-  -> execution.route_to_target -> execution.CcxtBroker | PaperBroker
+POST /signals -> signals.SignalIngestor -> signals.SignalQueue
+  -> runtime.TradingController:
+       risk.signal_to_target_position (sizing)
+       risk.KillSwitch + risk.DrawdownMonitor (one reconciled risk check)
+       execution.route_to_target -> execution.CcxtBroker | PaperBroker
+       persistence.TradeRepository (same store as the proven stack)
+       runtime.logging_config's audit logger (JSON trade audit trail)
+  -> GET /health, GET /metrics (runtime.HealthMonitor, runtime.metrics)
+```
+
+```bash
+trading-bot serve                          # paper mode (default), Binance market data, no real orders
+trading-bot serve --live                   # real orders, Binance only, same credential/opt-in gate as `run`
+trading-bot status                         # query a running `serve` instance's /health + /metrics
+curl -X POST localhost:8080/signals \
+  -H "Content-Type: application/json" \
+  -d '{"source": "my-strategy", "symbol": "BTC/USDT", "action": "BUY"}'
 ```
 
 Symbols in this stack use ccxt's unified `BASE/QUOTE` form (`"BTC/USDT"`),
-not Binance's native `"BTCUSDT"` form used by the proven stack -- another
-reason the two don't share code directly.
+not Binance's native `"BTCUSDT"` form used by the proven stack; `serve`
+accepts either in an incoming signal and normalizes internally. Live trading
+via `serve` is currently wired for `--exchange-id binance` only -- paper mode
+works against any ccxt exchange id since it only needs public price data.
+
+The kill switch latches: once tripped (drawdown or daily-loss limit
+breached), `serve` stops placing new orders and reports `healthy: false` via
+`/health` until the process is restarted.
 
 ## Setup
 
@@ -57,7 +73,7 @@ reason the two don't share code directly.
 python -m venv .venv
 .venv/Scripts/pip install -e ".[dev]"   # Windows
 # .venv/bin/pip install -e ".[dev]"     # macOS/Linux
-cp .env.example .env                     # fill in BINANCE_API_KEY/SECRET for `run`
+cp .env.example .env                     # fill in BINANCE_API_KEY/SECRET for `run` / `serve --live`
 ```
 
 ## Testing
@@ -69,7 +85,10 @@ black src tests
 mypy src/trading_bot
 ```
 
-156 tests, 98% coverage as of the last commit.
+204 tests, 95% coverage as of the last commit. `serve`'s async server
+lifecycle (signal handlers, task orchestration) is intentionally left out of
+the automated suite and verified with a real running instance instead -- see
+the commit history for the smoke-test transcript.
 
 ## Roadmap
 
@@ -81,8 +100,9 @@ mypy src/trading_bot
 - [x] Signal ingestion (schema, priority queue, backoff)
 - [x] Portfolio state, drawdown monitor, kill switch, volatility sizing
 - [x] Async broker abstraction (Binance + ccxt) and order router
-- [ ] Main event loop wiring the component stack together end-to-end
-      (signal -> target -> route -> fill -> persist, with one reconciled
-      risk-limit model instead of the two that exist today), structured
-      logging, trade audit trail, and performance metrics (Sharpe, etc.)
+- [x] Main event loop (`TradingController`), webhook signal ingestion,
+      structured JSON logging + trade audit trail, Sharpe/PnL/drawdown
+      metrics, health checks, CLI (`serve`, `status`)
 - [ ] CI (GitHub Actions running the test suite on push)
+- [ ] Live trading via `serve` for exchanges other than Binance (needs a
+      credential story beyond the Binance-shaped `Settings` fields)
