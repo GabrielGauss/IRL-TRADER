@@ -19,9 +19,18 @@ from trading_bot.config import Settings
 logger = logging.getLogger(__name__)
 
 KLINE_COLUMNS = [
-    "open_time", "open", "high", "low", "close", "volume",
-    "close_time", "quote_asset_volume", "num_trades",
-    "taker_buy_base", "taker_buy_quote", "ignore",
+    "open_time",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time",
+    "quote_asset_volume",
+    "num_trades",
+    "taker_buy_base",
+    "taker_buy_quote",
+    "ignore",
 ]
 
 
