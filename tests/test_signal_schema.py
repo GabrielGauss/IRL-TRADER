@@ -72,3 +72,16 @@ def test_signal_payload_from_raw_dict_via_model_validate():
 def test_signal_payload_rejects_priority_out_of_range(priority):
     with pytest.raises(ValidationError):
         SignalPayload(source="x", symbol="BTCUSDT", action="BUY", priority=priority)
+
+
+@pytest.mark.parametrize("raw_action", ["buy", "Sell", " close ", "hold\n"])
+def test_signal_payload_normalizes_action_case_and_whitespace(raw_action):
+    # TradingView's {{strategy.order.action}} placeholder renders lowercase "buy"/"sell".
+    signal = SignalPayload(source="tradingview", symbol="BTCUSDT", action=raw_action)
+
+    assert signal.action is SignalAction(raw_action.strip().upper())
+
+
+def test_signal_payload_still_rejects_unknown_action():
+    with pytest.raises(ValidationError):
+        SignalPayload(source="tradingview", symbol="BTCUSDT", action="long")

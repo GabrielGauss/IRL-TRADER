@@ -41,6 +41,12 @@ class SignalPayload(BaseModel):
     received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("action", mode="before")
+    @classmethod
+    def _normalize_action(cls, value: Any) -> Any:
+        # Providers vary in casing (TradingView's {{strategy.order.action}} is lowercase).
+        return value.strip().upper() if isinstance(value, str) else value
+
     @field_validator("symbol")
     @classmethod
     def _normalize_symbol(cls, value: str) -> str:
