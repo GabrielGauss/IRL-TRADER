@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import MagicMock
 
 import pytest
+from aiohttp.test_utils import TestClient, TestServer
+from pydantic import SecretStr
 
 from trading_bot import cli
-from trading_bot.config import Settings
+from trading_bot.config import Settings, WebhookSettings
 from trading_bot.execution.broker import CcxtBroker, PaperBroker
 
 
@@ -20,6 +23,27 @@ def _fake_settings() -> Settings:
         max_drawdown_pct=10.0,
         position_size_fraction=0.1,
         db_path="unused.db",
+    )
+
+
+_WEBHOOK_SECRET = "cli-test-secret-0123456789abcdef"
+
+
+@pytest.fixture(autouse=True)
+def _webhook_secret_configured(monkeypatch):
+    """Serve refuses to start without a webhook secret; give every test one by default."""
+    monkeypatch.setattr(
+        cli,
+        "load_webhook_settings",
+        lambda: WebhookSettings.model_construct(signal_webhook_secret=SecretStr(_WEBHOOK_SECRET)),
+    )
+
+
+def _no_webhook_secret(monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "load_webhook_settings",
+        lambda: WebhookSettings.model_construct(signal_webhook_secret=None),
     )
 
 
@@ -187,3 +211,53 @@ def test_cmd_status_returns_one_when_unreachable(monkeypatch, capsys):
     exit_code = cli.cmd_status(args)
 
     assert exit_code == 1
+
+
+def test_build_serve_runtime_refuses_to_start_without_webhook_secret(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "CcxtBroker", lambda *a, **k: MagicMock(spec=CcxtBroker))
+    _no_webhook_secret(monkeypatch)
+
+    args = cli.build_parser().parse_args(["serve", "--db-path", str(tmp_path / "t.db")])
+    with pytest.raises(ValueError, match="SIGNAL_WEBHOOK_SECRET"):
+        cli._build_serve_runtime(args)
+
+
+def test_build_serve_runtime_allows_no_auth_in_paper_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "CcxtBroker", lambda *a, **k: MagicMock(spec=CcxtBroker))
+    _no_webhook_secret(monkeypatch)
+
+    args = cli.build_parser().parse_args(
+        ["serve", "--no-auth", "--db-path", str(tmp_path / "t.db")]
+    )
+    runtime = cli._build_serve_runtime(args)
+
+    assert isinstance(runtime.broker, PaperBroker)
+
+
+def test_build_serve_runtime_rejects_no_auth_in_live_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "CcxtBroker", lambda *a, **k: MagicMock(spec=CcxtBroker))
+    monkeypatch.setattr(cli, "load_settings", _fake_settings)
+    _no_webhook_secret(monkeypatch)
+
+    args = cli.build_parser().parse_args(
+        ["serve", "--live", "--no-auth", "--db-path", str(tmp_path / "t.db")]
+    )
+    with pytest.raises(ValueError, match="--no-auth"):
+        cli._build_serve_runtime(args)
+
+
+def test_build_serve_runtime_wires_secret_into_webhook(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "CcxtBroker", lambda *a, **k: MagicMock(spec=CcxtBroker))
+    args = cli.build_parser().parse_args(["serve", "--db-path", str(tmp_path / "t.db")])
+    runtime = cli._build_serve_runtime(args)
+
+    async def scenario():
+        signal = {"source": "tv", "symbol": "BTC/USDT", "action": "BUY"}
+        async with TestClient(TestServer(runtime.app)) as client:
+            denied = await client.post("/signals", json=signal)
+            allowed = await client.post(
+                "/signals", json=signal, headers={"X-Signal-Secret": _WEBHOOK_SECRET}
+            )
+            return denied.status, allowed.status
+
+    assert asyncio.run(scenario()) == (401, 202)
