@@ -133,4 +133,4 @@ docker run --rm -v trading-bot_trading_bot_data:/data alpine rm /data/kill_switc
 docker restart trading-bot
 ```
 
-(`docker volume ls | grep trading_bot` shows the exact volume name.)
+(`name: trading-bot` in the compose file keeps this volume name stable.)
