@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from pydantic import SecretStr
+
+from trading_bot import cli
+from trading_bot.config import IrlSettings, WebhookSettings
+from trading_bot.execution.broker import CcxtBroker
+from trading_bot.irl.client import IrlClient, IrlUnavailable
+from trading_bot.irl.gate import IrlGate, PassthroughGate
+
+_AGENT_ID = "00000000-0000-0000-0000-0000000000aa"
+
+
+@pytest.fixture(autouse=True)
+def _webhook_secret(monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "load_webhook_settings",
+        lambda: WebhookSettings.model_construct(
+            signal_webhook_secret=SecretStr("cli-test-secret-0123456789abcdef")
+        ),
+    )
+    monkeypatch.setattr(cli, "CcxtBroker", lambda *a, **k: MagicMock(spec=CcxtBroker))
+
+
+def _irl_settings(monkeypatch, *, base_url="http://irl-engine:4000", token="tok", agent=_AGENT_ID):
+    monkeypatch.setattr(
+        cli,
+        "load_irl_settings",
+        lambda: IrlSettings.model_construct(
+            irl_base_url=base_url,
+            irl_api_token=SecretStr(token) if token else None,
+            irl_agent_id=agent,
+        ),
+    )
+
+
+def _parse(*argv: str):
+    return cli.build_parser().parse_args(list(argv))
+
+
+def test_irl_settings_read_from_environment(monkeypatch):
+    monkeypatch.setenv("IRL_BASE_URL", "http://irl-engine:4000")
+    monkeypatch.setenv("IRL_API_TOKEN", "secret-token")
+    monkeypatch.setenv("IRL_AGENT_ID", _AGENT_ID)
+
+    settings = IrlSettings(_env_file=None)
+
+    assert settings.irl_base_url == "http://irl-engine:4000"
+    assert settings.irl_api_token is not None
+    assert settings.irl_api_token.get_secret_value() == "secret-token"
+    assert "secret-token" not in repr(settings)
+    assert settings.irl_agent_id == _AGENT_ID
+
+
+def test_serve_without_irl_flag_uses_passthrough_gate(tmp_path):
+    runtime = cli._build_serve_runtime(_parse("serve", "--db-path", str(tmp_path / "t.db")))
+
+    assert isinstance(runtime.gate, PassthroughGate)
+    assert runtime.irl_client is None
+
+
+def test_serve_with_irl_builds_irl_gate_with_paper_venue(tmp_path, monkeypatch):
+    _irl_settings(monkeypatch)
+
+    runtime = cli._build_serve_runtime(
+        _parse("serve", "--irl", "--db-path", str(tmp_path / "t.db"))
+    )
+
+    assert isinstance(runtime.gate, IrlGate)
+    assert isinstance(runtime.irl_client, IrlClient)
+    assert runtime.gate._venue_id == "BINANCE-PAPER"
+    assert runtime.gate._notional_currency == "USDT"
+    assert runtime.gate._identity.agent_id == _AGENT_ID
+
+
+@pytest.mark.parametrize(
+    "missing", [{"base_url": ""}, {"token": ""}, {"agent": ""}], ids=["url", "token", "agent"]
+)
+def test_serve_with_irl_refuses_to_start_when_settings_missing(tmp_path, monkeypatch, missing):
+    _irl_settings(monkeypatch, **missing)
+
+    with pytest.raises(ValueError, match="IRL_"):
+        cli._build_serve_runtime(_parse("serve", "--irl", "--db-path", str(tmp_path / "t.db")))
+
+
+def test_agent_identity_is_deterministic_and_tracks_risk_parameters():
+    base = cli._agent_identity(_parse("serve"), _AGENT_ID)
+    same = cli._agent_identity(_parse("serve"), _AGENT_ID)
+    changed = cli._agent_identity(_parse("serve", "--position-size-fraction", "0.2"), _AGENT_ID)
+
+    assert base == same
+    assert len(base.model_hash_hex) == 64
+    assert changed.hyperparameter_checksum != base.hyperparameter_checksum
+    assert changed.model_hash_hex != base.model_hash_hex
+
+
+def test_irl_register_uses_the_same_model_hash_as_serve(monkeypatch, capsys):
+    _irl_settings(monkeypatch, agent="")
+    client = AsyncMock(spec=IrlClient)
+    client.register_agent.return_value = "new-agent-id"
+    monkeypatch.setattr(cli, "IrlClient", lambda *a, **k: client)
+
+    exit_code = cli.cmd_irl_register(
+        _parse("irl-register", "--max-notional", "500", "--position-size-fraction", "0.2")
+    )
+
+    expected = cli._agent_identity(_parse("serve", "--position-size-fraction", "0.2"), "")
+    kwargs = client.register_agent.await_args.kwargs
+    assert exit_code == 0
+    assert kwargs["model_hash_hex"] == expected.model_hash_hex
+    assert kwargs["max_notional"] == 500.0
+    assert "IRL_AGENT_ID=new-agent-id" in capsys.readouterr().out
+    client.close.assert_awaited()
+
+
+def test_irl_register_returns_one_when_irl_unreachable(monkeypatch, caplog):
+    _irl_settings(monkeypatch, agent="")
+    client = AsyncMock(spec=IrlClient)
+    client.register_agent.side_effect = IrlUnavailable(0, "UNREACHABLE", "connection refused")
+    monkeypatch.setattr(cli, "IrlClient", lambda *a, **k: client)
+
+    with caplog.at_level("ERROR"):
+        exit_code = cli.cmd_irl_register(_parse("irl-register", "--max-notional", "500"))
+
+    assert exit_code == 1
+    assert "connection refused" in caplog.text
+
+
+def test_irl_register_requires_url_and_token(monkeypatch, caplog):
+    _irl_settings(monkeypatch, token="", agent="")
+
+    with caplog.at_level("ERROR"):
+        exit_code = cli.cmd_irl_register(_parse("irl-register", "--max-notional", "500"))
+
+    assert exit_code == 2
+    assert "IRL_API_TOKEN" in caplog.text

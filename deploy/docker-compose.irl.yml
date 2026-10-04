@@ -1,0 +1,21 @@
+# Overlay that routes every order through the IRL Engine gate.
+#
+#   docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.irl.yml up -d
+#
+# Needs IRL_BASE_URL, IRL_API_TOKEN and IRL_AGENT_ID in ../.env; serve refuses
+# to start (exit 2) if any is missing. Keep the strategy/risk flags here in
+# sync with the ones passed to `irl-register`, or the model hash won't match.
+services:
+  trading-bot:
+    command:
+      - serve
+      - --paper
+      - --irl
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --db-path
+      - /data/trading_bot.db
+      - --audit-log
+      - /data/trade_audit.log

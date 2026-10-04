@@ -100,3 +100,15 @@ def test_constructs_a_real_ccxt_exchange_when_exchange_id_given():
     broker = CcxtBroker("binance", testnet=False)
     assert broker.exchange_id == "binance"
     asyncio.run(broker.close())
+
+
+def test_place_order_forwards_client_order_id_as_unified_param():
+    exchange = _fake_exchange()
+    exchange.create_order.return_value = {"id": "9", "average": 1.0, "status": "closed"}
+    broker = CcxtBroker(exchange=exchange)
+
+    asyncio.run(broker.place_order("BTC/USDT", OrderSide.BUY, 0.01, client_order_id="irl-abc"))
+
+    exchange.create_order.assert_awaited_once_with(
+        "BTC/USDT", "market", "buy", 0.01, None, {"clientOrderId": "irl-abc"}
+    )

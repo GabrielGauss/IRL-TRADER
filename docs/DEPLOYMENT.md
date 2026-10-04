@@ -98,7 +98,41 @@ and the message to:
 Signals for a symbol other than the configured `--symbol` (default `BTC/USDT`)
 are ignored and logged.
 
-## 6. Going live (Binance testnet first)
+## 6. IRL gate (authorize → place → bind)
+
+With `--irl`, every order is authorized by the IRL Engine before it is placed,
+and the fill is bound back to the IRL trace afterwards. The order's client id
+(`irl-…`) is sealed in the trace and sent to the exchange, linking the two.
+If IRL denies the intent, is unreachable, or errors, the order is **not**
+placed: the signal is skipped, logged as `order blocked` in the audit trail,
+and `/health` shows the reason in `last_error`. A failed bind after a real
+fill never stops the bot; it is logged with `irl_bind_error` and the trace
+shows up under IRL's `/irl/pending` for reconciliation.
+
+1. Issue a client token with IRL's admin endpoint (owner token required):
+   `POST /irl/admin/tokens` with `{"client_name": "trading-bot"}`. The token
+   is shown once.
+2. Add to `.env`: `IRL_BASE_URL=http://irl-engine:4000` (the shared Docker
+   network) and `IRL_API_TOKEN=<token>`.
+3. Register the agent with the **same** strategy/risk flags `serve` uses. The
+   cap is per order, in quote currency, and IRL scales it by the current
+   market regime:
+   ```bash
+   docker compose -f deploy/docker-compose.prod.yml run --rm trading-bot \
+     irl-register --max-notional 200
+   ```
+   Put the printed `IRL_AGENT_ID=…` line in `.env`.
+4. Start with the IRL overlay:
+   ```bash
+   docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.irl.yml up -d
+   docker logs trading-bot | grep "IRL gate enabled"
+   ```
+
+Changing the version or any strategy/risk flag changes the model hash, and IRL
+then rejects intents until you register again (step 3) and update
+`IRL_AGENT_ID`.
+
+## 7. Going live (Binance testnet first)
 
 1. Create an API key with **withdrawals disabled** and **restricted to the VPS
    IP**. A leaked key can then trade but cannot move funds out.

@@ -21,7 +21,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from trading_bot.execution.broker import Broker, Fill
-from trading_bot.execution.router import route_to_target
+from trading_bot.execution.router import plan_order
+from trading_bot.irl.gate import ExecutionResult, OrderBlocked, OrderGate, PassthroughGate
 from trading_bot.persistence.repository import TradeRecord, TradeRepository
 from trading_bot.risk.drawdown import DrawdownMonitor, DrawdownStatus
 from trading_bot.risk.kill_switch import KillSwitch, KillSwitchTripped
@@ -57,6 +58,7 @@ class TradingController:
         quote_asset: str,
         position_size_fraction: float,
         initial_cash: float = 0.0,
+        gate: OrderGate | None = None,
     ):
         self._broker = broker
         self.queue = queue
@@ -70,6 +72,7 @@ class TradingController:
         self._position_size_fraction = position_size_fraction
         self._portfolio = PortfolioState(cash=initial_cash)
         self._last_drawdown_status: DrawdownStatus | None = None
+        self._gate: OrderGate = gate or PassthroughGate()
 
     @property
     def portfolio(self) -> PortfolioState:
@@ -114,24 +117,16 @@ class TradingController:
                 current_quantity=current_quantity,
                 position_size_fraction=self._position_size_fraction,
             )
-            fill = await route_to_target(self._broker, target, self._symbol, self._base_asset)
-            if fill is not None:
-                self._portfolio = self._portfolio.apply_fill(
-                    self._base_asset, fill.side.value, fill.quantity, fill.price
-                )
-                self._repository.save_trade(_fill_to_trade_record(fill))
-                audit_logger.info(
-                    "fill executed",
-                    extra={
-                        "order_id": fill.order_id,
-                        "symbol": fill.symbol,
-                        "side": fill.side.value,
-                        "quantity": fill.quantity,
-                        "price": fill.price,
-                        "fee": fill.fee,
-                        "status": fill.status,
-                    },
-                )
+            plan = await plan_order(self._broker, target, self._symbol, self._base_asset)
+            fill = None
+            if plan is not None:
+                try:
+                    result = await self._gate.execute(self._broker, plan, price=price)
+                except OrderBlocked as blocked:
+                    self._record_blocked(blocked, signal.source)
+                else:
+                    fill = result.fill
+                    self._record_fill(result, signal.source)
             self._repository.record_equity(equity)
             self.health.record_signal_processed()
             return fill
@@ -141,6 +136,46 @@ class TradingController:
         except Exception as exc:
             self.health.record_error(str(exc))
             raise
+
+    def _record_fill(self, result: ExecutionResult, signal_source: str) -> None:
+        fill = result.fill
+        self._portfolio = self._portfolio.apply_fill(
+            self._base_asset, fill.side.value, fill.quantity, fill.price
+        )
+        self._repository.save_trade(_fill_to_trade_record(fill))
+        receipt = result.receipt
+        audit_logger.info(
+            "fill executed",
+            extra={
+                "order_id": fill.order_id,
+                "symbol": fill.symbol,
+                "side": fill.side.value,
+                "quantity": fill.quantity,
+                "price": fill.price,
+                "fee": fill.fee,
+                "status": fill.status,
+                "signal_source": signal_source,
+                "irl_trace_id": receipt.trace_id if receipt else None,
+                "irl_reasoning_hash": receipt.reasoning_hash if receipt else None,
+                "irl_final_proof": receipt.final_proof if receipt else None,
+                "irl_verification_status": receipt.verification_status if receipt else None,
+                "irl_bind_error": receipt.bind_error if receipt else None,
+            },
+        )
+
+    def _record_blocked(self, blocked: OrderBlocked, signal_source: str) -> None:
+        logger.warning("Order blocked by gate: %s", blocked.reason)
+        self.health.record_error(blocked.reason)
+        audit_logger.info(
+            "order blocked",
+            extra={
+                "reason": blocked.reason,
+                "policy_denied": blocked.policy_denied,
+                "irl_trace_id": blocked.trace_id,
+                "signal_source": signal_source,
+                "symbol": self._symbol,
+            },
+        )
 
     async def _compute_daily_loss_pct(self, current_equity: float) -> float:
         since = datetime.now(UTC) - timedelta(days=1)

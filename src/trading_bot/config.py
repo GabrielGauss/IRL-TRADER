@@ -71,6 +71,24 @@ class WebhookSettings(BaseSettings):
         return value
 
 
+class IrlSettings(BaseSettings):
+    """Connection to the IRL Engine for `serve --irl` and `irl-register`.
+
+    Blank defaults rather than required fields: they are only needed when IRL
+    is enabled, and the CLI reports exactly which ones are missing.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    irl_base_url: str = Field(default="")
+    irl_api_token: SecretStr | None = Field(default=None)
+    irl_agent_id: str = Field(default="")
+
+
+def load_irl_settings() -> IrlSettings:
+    return IrlSettings()
+
+
 def load_webhook_settings() -> WebhookSettings:
     return WebhookSettings()
 

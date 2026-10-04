@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from trading_bot.execution.broker import Fill, OrderSide
-from trading_bot.execution.router import route_to_target
+from trading_bot.execution.router import OrderPlan, plan_order, route_to_target
 from trading_bot.risk.target_position import TargetPosition
 
 
@@ -79,3 +79,20 @@ def test_ignores_dust_deltas_below_min_order_quantity():
 
     broker.place_order.assert_not_awaited()
     assert fill is None
+
+
+def test_plan_order_returns_buy_plan_for_shortfall_without_placing():
+    broker = _fake_broker(current_balance=0.3)
+
+    plan = asyncio.run(plan_order(broker, TargetPosition("BTC/USDT", 1.0), "BTC/USDT", "BTC"))
+
+    assert plan == OrderPlan(symbol="BTC/USDT", side=OrderSide.BUY, quantity=pytest.approx(0.7))
+    broker.place_order.assert_not_awaited()
+
+
+def test_plan_order_returns_none_when_already_at_target():
+    broker = _fake_broker(current_balance=1.0)
+
+    assert (
+        asyncio.run(plan_order(broker, TargetPosition("BTC/USDT", 1.0), "BTC/USDT", "BTC")) is None
+    )

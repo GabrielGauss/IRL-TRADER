@@ -11,17 +11,26 @@ import signal
 import sys
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 from aiohttp import web
 
 from trading_bot.backtest.engine import run_backtest
-from trading_bot.config import load_public_data_settings, load_settings, load_webhook_settings
+from trading_bot.config import (
+    IrlSettings,
+    load_irl_settings,
+    load_public_data_settings,
+    load_settings,
+    load_webhook_settings,
+)
 from trading_bot.exchange.binance_client import BinanceClient
 from trading_bot.execution.broker import Broker, CcxtBroker, PaperBroker
 from trading_bot.execution.engine import ExecutionEngine, RiskLimitBreached, RiskLimits
+from trading_bot.irl.client import AgentIdentity, IrlClient, IrlError, model_hash
+from trading_bot.irl.gate import IrlGate, OrderGate, PassthroughGate
 from trading_bot.persistence.repository import TradeRepository
 from trading_bot.risk.drawdown import DrawdownMonitor, DrawdownStatus
 from trading_bot.risk.kill_switch import KillSwitch, KillSwitchLimits
@@ -137,6 +146,77 @@ class ServeRuntime:
     app: web.Application
     broker: Broker
     price_broker: Broker | None
+    gate: OrderGate = field(default_factory=PassthroughGate)
+    irl_client: IrlClient | None = None
+
+
+IRL_MODEL_ID = "trading-bot/signal-executor"
+IRL_FEATURE_SCHEMA_ID = "signal-payload-v1"
+
+
+def _agent_identity(args: argparse.Namespace, agent_id: str) -> AgentIdentity:
+    """The identity IRL seals into every trace. The model hash covers the
+    package version and every parameter that changes trading behavior, so
+    changing any of them requires re-registering (`trading-bot irl-register`)
+    -- IRL then rejects intents from the old, unregistered configuration."""
+    hyperparameters = {
+        "symbol": args.symbol,
+        "exchange_id": args.exchange_id,
+        "position_size_fraction": args.position_size_fraction,
+        "max_drawdown_pct": args.max_drawdown_pct,
+        "max_daily_loss_pct": args.max_daily_loss_pct,
+    }
+    hyperparameter_checksum = model_hash(hyperparameters)
+    prompt_version = package_version("trading-bot")
+    return AgentIdentity(
+        agent_id=agent_id,
+        model_hash_hex=model_hash(
+            {
+                "model_id": IRL_MODEL_ID,
+                "version": prompt_version,
+                "feature_schema_id": IRL_FEATURE_SCHEMA_ID,
+                "hyperparameter_checksum": hyperparameter_checksum,
+            }
+        ),
+        model_id=IRL_MODEL_ID,
+        prompt_version=prompt_version,
+        feature_schema_id=IRL_FEATURE_SCHEMA_ID,
+        hyperparameter_checksum=hyperparameter_checksum,
+    )
+
+
+def _irl_connection(settings: IrlSettings, *, need_agent: bool) -> tuple[str, str, str]:
+    missing = [
+        name
+        for name, present in (
+            ("IRL_BASE_URL", bool(settings.irl_base_url)),
+            ("IRL_API_TOKEN", settings.irl_api_token is not None),
+            ("IRL_AGENT_ID", bool(settings.irl_agent_id) or not need_agent),
+        )
+        if not present
+    ]
+    if missing or settings.irl_api_token is None:
+        raise ValueError(f"IRL is enabled but {', '.join(missing)} not set (in .env or env).")
+    return (
+        settings.irl_base_url,
+        settings.irl_api_token.get_secret_value(),
+        settings.irl_agent_id,
+    )
+
+
+def _build_irl_gate(args: argparse.Namespace) -> tuple[IrlGate, IrlClient]:
+    base_url, token, agent_id = _irl_connection(load_irl_settings(), need_agent=True)
+    identity = _agent_identity(args, agent_id)
+    client = IrlClient(base_url, token)
+    venue_id = args.exchange_id.upper() + ("-PAPER" if args.paper else "")
+    logger.info(
+        "IRL gate enabled: agent %s, model hash %s, venue %s",
+        agent_id,
+        identity.model_hash_hex,
+        venue_id,
+    )
+    gate = IrlGate(client, identity, venue_id=venue_id, notional_currency=args.quote_asset)
+    return gate, client
 
 
 def _resolve_signal_secret(args: argparse.Namespace) -> str | None:
@@ -198,6 +278,11 @@ def _build_serve_runtime(args: argparse.Namespace) -> ServeRuntime:
         )
         initial_cash = 0.0
 
+    gate: OrderGate = PassthroughGate()
+    irl_client: IrlClient | None = None
+    if args.irl:
+        gate, irl_client = _build_irl_gate(args)
+
     controller = TradingController(
         broker=broker,
         queue=signal_queue,
@@ -210,6 +295,7 @@ def _build_serve_runtime(args: argparse.Namespace) -> ServeRuntime:
         quote_asset=args.quote_asset,
         position_size_fraction=args.position_size_fraction,
         initial_cash=initial_cash,
+        gate=gate,
     )
     ingestor = SignalIngestor(fetch=raw_queue.get, queue=signal_queue)
 
@@ -234,7 +320,13 @@ def _build_serve_runtime(args: argparse.Namespace) -> ServeRuntime:
 
     app = create_app(raw_queue, health, metrics_provider, signal_secret=signal_secret)
     return ServeRuntime(
-        controller=controller, ingestor=ingestor, app=app, broker=broker, price_broker=price_broker
+        controller=controller,
+        ingestor=ingestor,
+        app=app,
+        broker=broker,
+        price_broker=price_broker,
+        gate=gate,
+        irl_client=irl_client,
     )
 
 
@@ -277,6 +369,8 @@ async def _run_serve_runtime(runtime: ServeRuntime, args: argparse.Namespace) ->
         await runtime.broker.close()
         if runtime.price_broker is not None:
             await runtime.price_broker.close()
+        if runtime.irl_client is not None:
+            await runtime.irl_client.close()
 
     return 1 if runtime.controller.health.status().kill_switch_tripped else 0
 
@@ -325,6 +419,37 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def cmd_irl_register(args: argparse.Namespace) -> int:
+    try:
+        base_url, token, _ = _irl_connection(load_irl_settings(), need_agent=False)
+    except ValueError as exc:
+        logger.error("irl-register configuration error: %s", exc)
+        return 2
+    identity = _agent_identity(args, agent_id="")
+
+    async def register() -> str:
+        client = IrlClient(base_url, token)
+        try:
+            return await client.register_agent(
+                name=args.name,
+                model_hash_hex=identity.model_hash_hex,
+                max_notional=args.max_notional,
+            )
+        finally:
+            await client.close()
+
+    try:
+        agent_id = asyncio.run(register())
+    except IrlError as exc:
+        logger.error("IRL agent registration failed: %s", exc)
+        return 1
+    print(f"Registered IRL agent {args.name!r}")
+    print(f"Model hash:  {identity.model_hash_hex}")
+    print("Add to .env, then run `serve --irl` with the same strategy/risk flags:")
+    print(f"IRL_AGENT_ID={agent_id}")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     base_url = f"http://{args.host}:{args.port}"
     try:
@@ -351,6 +476,16 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"Sharpe ratio:      {metrics['sharpe_ratio']:.3f}")
     print(f"Trades:            {metrics['num_trades']}")
     return 0
+
+
+def _add_identity_args(parser: argparse.ArgumentParser) -> None:
+    """Flags that define trading behavior, shared by `serve` and
+    `irl-register` so both compute the same IRL model hash."""
+    parser.add_argument("--symbol", default="BTC/USDT", help="ccxt unified symbol")
+    parser.add_argument("--exchange-id", default="binance")
+    parser.add_argument("--position-size-fraction", type=float, default=0.1)
+    parser.add_argument("--max-drawdown-pct", type=float, default=10.0)
+    parser.add_argument("--max-daily-loss-pct", type=float, default=3.0)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -387,10 +522,9 @@ def build_parser() -> argparse.ArgumentParser:
         "serve",
         help="Run the signal-driven async controller (webhook + health/metrics HTTP server)",
     )
-    serve_parser.add_argument("--symbol", default="BTC/USDT", help="ccxt unified symbol")
+    _add_identity_args(serve_parser)
     serve_parser.add_argument("--base-asset", default="BTC")
     serve_parser.add_argument("--quote-asset", default="USDT")
-    serve_parser.add_argument("--exchange-id", default="binance")
     serve_parser.add_argument(
         "--paper",
         action="store_true",
@@ -406,9 +540,6 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--paper-quote-balance", type=float, default=1000.0)
     serve_parser.add_argument("--paper-slippage-bps", type=float, default=5.0)
     serve_parser.add_argument("--paper-fee-bps", type=float, default=10.0)
-    serve_parser.add_argument("--position-size-fraction", type=float, default=0.1)
-    serve_parser.add_argument("--max-drawdown-pct", type=float, default=10.0)
-    serve_parser.add_argument("--max-daily-loss-pct", type=float, default=3.0)
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8080)
     serve_parser.add_argument("--poll-timeout", type=float, default=1.0)
@@ -426,7 +557,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Accept unauthenticated POST /signals (paper mode only; for local testing)",
     )
+    serve_parser.add_argument(
+        "--irl",
+        action="store_true",
+        help="Route every order through IRL authorize/bind (needs IRL_* settings)",
+    )
     serve_parser.set_defaults(func=cmd_serve)
+
+    register_parser = subparsers.add_parser(
+        "irl-register",
+        help="Register this bot's strategy/risk configuration as an IRL agent",
+    )
+    _add_identity_args(register_parser)
+    register_parser.add_argument("--name", default="trading-bot")
+    register_parser.add_argument(
+        "--max-notional",
+        type=float,
+        required=True,
+        help="IRL notional cap per order, in quote currency",
+    )
+    register_parser.set_defaults(func=cmd_irl_register)
 
     status_parser = subparsers.add_parser(
         "status", help="Query a running `serve` instance's health and metrics"
