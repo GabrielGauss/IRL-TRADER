@@ -277,3 +277,67 @@ def test_cmd_serve_returns_two_with_clean_error_on_config_problem(tmp_path, monk
     assert exit_code == 2
     assert "SIGNAL_WEBHOOK_SECRET" in caplog.text
     assert not audit_log.exists()
+
+
+def _serve_args_in(tmp_path):
+    return cli.build_parser().parse_args(
+        [
+            "serve",
+            "--db-path",
+            str(tmp_path / "t.db"),
+            "--audit-log",
+            str(tmp_path / "audit.log"),
+        ]
+    )
+
+
+def _fake_runtime(kill_switch_tripped: bool, last_error: str | None = None):
+    runtime = MagicMock()
+    status = runtime.controller.health.status.return_value
+    status.kill_switch_tripped = kill_switch_tripped
+    status.last_error = last_error
+    return runtime
+
+
+def _stub_serve_run(monkeypatch, runtime, exit_code: int):
+    async def fake_run(rt, args):
+        return exit_code
+
+    monkeypatch.setattr(cli, "configure_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "_build_serve_runtime", lambda args: runtime)
+    monkeypatch.setattr(cli, "_run_serve_runtime", fake_run)
+
+
+def test_cmd_serve_persists_kill_switch_latch_when_tripped(tmp_path, monkeypatch):
+    _stub_serve_run(monkeypatch, _fake_runtime(True, "drawdown 12% > 10%"), exit_code=1)
+
+    exit_code = cli.cmd_serve(_serve_args_in(tmp_path))
+
+    latch = tmp_path / "kill_switch.tripped"
+    assert exit_code == 1
+    assert latch.exists()
+    assert json.loads(latch.read_text())["last_error"] == "drawdown 12% > 10%"
+
+
+def test_cmd_serve_does_not_write_latch_on_normal_shutdown(tmp_path, monkeypatch):
+    _stub_serve_run(monkeypatch, _fake_runtime(False), exit_code=0)
+
+    assert cli.cmd_serve(_serve_args_in(tmp_path)) == 0
+    assert not (tmp_path / "kill_switch.tripped").exists()
+
+
+def test_cmd_serve_refuses_to_start_while_kill_switch_latched(tmp_path, monkeypatch, caplog):
+    (tmp_path / "kill_switch.tripped").write_text('{"tripped_at": "2026-10-04T00:00:00+00:00"}')
+    monkeypatch.setattr(cli, "configure_logging", lambda **kwargs: None)
+
+    def must_not_build(args):
+        raise AssertionError("runtime must not be built while latched")
+
+    monkeypatch.setattr(cli, "_build_serve_runtime", must_not_build)
+
+    with caplog.at_level("ERROR"):
+        exit_code = cli.cmd_serve(_serve_args_in(tmp_path))
+
+    assert exit_code == 3
+    assert "kill_switch.tripped" in caplog.text
+    assert not (tmp_path / "audit.log").exists()

@@ -17,3 +17,5 @@ venv/
 
 .vscode/
 .idea/
+kill_switch.tripped
+*.log

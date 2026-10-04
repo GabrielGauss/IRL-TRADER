@@ -1,0 +1,36 @@
+# Production compose for a host that already runs a reverse proxy on a shared
+# Docker network (e.g. MacroPulse's nginx on `macropulse_default`).
+# No ports are published: nginx reaches the bot as http://trading-bot:8080.
+#
+#   cd /opt/trading-bot && docker compose -f deploy/docker-compose.prod.yml up -d --build
+services:
+  trading-bot:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: trading-bot:latest
+    container_name: trading-bot
+    # Safe with the persistent kill-switch latch: after a trip, restarts exit
+    # immediately (code 3) until /data/kill_switch.tripped is deleted.
+    restart: unless-stopped
+    env_file: ../.env
+    expose:
+      - "8080"
+    volumes:
+      - trading_bot_data:/data
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - proxy
+
+volumes:
+  trading_bot_data:
+
+networks:
+  proxy:
+    name: ${PROXY_NETWORK:-macropulse_default}
+    external: true

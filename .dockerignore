@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.env
+*.db
+*.log
+kill_switch.tripped
+.coverage
+htmlcov
+.pytest_cache
+.mypy_cache
+.ruff_cache
+**/__pycache__
+tests
+deploy
+docs
