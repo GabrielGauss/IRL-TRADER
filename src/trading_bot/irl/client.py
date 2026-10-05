@@ -103,6 +103,7 @@ class IrlClient:
         venue_id: str,
         client_order_id: str,
         heartbeat: Mapping[str, Any] | None = None,
+        mta_ref: str | None = None,
     ) -> AuthorizeResult:
         # Spot only: a sell can only reduce a long, never open a short, so it
         # is flagged reduce_only (IRL then lets exits through risk-off regimes).
@@ -121,6 +122,8 @@ class IrlClient:
         }
         if heartbeat is not None:
             payload["heartbeat"] = dict(heartbeat)
+        if mta_ref is not None:
+            payload["mta_ref"] = mta_ref
         data = await self._request("POST", "/irl/authorize", payload)
         return AuthorizeResult(
             trace_id=str(data["trace_id"]),
@@ -161,6 +164,14 @@ class IrlClient:
             verification_status=str(data["verification_status"]),
             divergence_reason=data.get("divergence_reason"),
         )
+
+    async def get_regime(self) -> str:
+        """Layer 2 v2: IRL's current verified regime reference (`mta_ref`)."""
+        data = await self._request("GET", "/irl/regime")
+        mta_ref = data.get("mta_ref")
+        if not isinstance(mta_ref, str) or not mta_ref:
+            raise IrlUnavailable(0, "NO_MTA_REF", "GET /irl/regime returned no mta_ref")
+        return mta_ref
 
     async def register_agent(self, *, name: str, model_hash_hex: str, max_notional: float) -> str:
         payload = {"name": name, "model_hash_hex": model_hash_hex, "max_notional": max_notional}

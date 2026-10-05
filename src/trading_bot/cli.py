@@ -176,8 +176,18 @@ def _irl_connection(settings: IrlSettings, *, need_agent: bool) -> tuple[str, st
     )
 
 
+IRL_L2_MODES = ("heartbeat", "regime")
+
+
+def _l2_mode(settings: IrlSettings) -> str:
+    mode = (getattr(settings, "irl_l2_mode", None) or "heartbeat").strip().lower()
+    if mode not in IRL_L2_MODES:
+        raise ValueError(f"IRL_L2_MODE must be one of {IRL_L2_MODES}, got {mode!r}")
+    return mode
+
+
 def _heartbeat_source(settings: IrlSettings) -> MacroPulseHeartbeatSource | None:
-    if not settings.irl_heartbeat_url:
+    if _l2_mode(settings) == "regime" or not settings.irl_heartbeat_url:
         return None
     if settings.macropulse_api_key is None:
         raise ValueError("IRL_HEARTBEAT_URL is set but MACROPULSE_API_KEY is not.")
@@ -196,11 +206,11 @@ def _build_irl_gate(
     client = IrlClient(base_url, token)
     venue_id = args.exchange_id.upper() + ("-PAPER" if args.paper else "")
     logger.info(
-        "IRL gate enabled: agent %s, model hash %s, venue %s, L2 heartbeat %s",
+        "IRL gate enabled: agent %s, model hash %s, venue %s, L2 %s",
         agent_id,
         identity.model_hash_hex,
         venue_id,
-        "on" if heartbeat_source else "off",
+        _l2_mode(settings) if heartbeat_source or _l2_mode(settings) == "regime" else "off",
     )
     gate = IrlGate(
         client,
@@ -208,6 +218,7 @@ def _build_irl_gate(
         venue_id=venue_id,
         notional_currency=args.quote_asset,
         heartbeat_source=heartbeat_source,
+        use_regime_ref=_l2_mode(settings) == "regime",
     )
     return gate, client, heartbeat_source
 
@@ -501,6 +512,8 @@ def cmd_irl_canary(args: argparse.Namespace) -> int:
     async def run() -> str:
         client = IrlClient(base_url, token)
         try:
+            regime_mode = _l2_mode(settings) == "regime"
+            mta_ref = await client.get_regime() if regime_mode else None
             heartbeat = await heartbeat_source.fetch() if heartbeat_source else None
             auth = await client.authorize(
                 identity,
@@ -512,6 +525,7 @@ def cmd_irl_canary(args: argparse.Namespace) -> int:
                 venue_id=f"{args.exchange_id.upper()}-CANARY",
                 client_order_id=client_order_id,
                 heartbeat=heartbeat,
+                mta_ref=mta_ref,
             )
             bound = await client.bind(
                 auth.trace_id, exchange_tx_id=client_order_id, execution_status="Rejected"

@@ -86,6 +86,9 @@ class IrlSettings(BaseSettings):
     # Layer-2 signed heartbeats (required when IRL runs LAYER2_ENABLED=true).
     irl_heartbeat_url: str = Field(default="")
     macropulse_api_key: SecretStr | None = Field(default=None)
+    # Layer 2 binding: "heartbeat" (MacroPulse-signed, needs the key above) or
+    # "regime" (v2: IRL's own verified regime ref from GET /irl/regime).
+    irl_l2_mode: str = Field(default="heartbeat")
 
 
 def load_irl_settings() -> IrlSettings:
