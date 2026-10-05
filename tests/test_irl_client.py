@@ -245,7 +245,8 @@ def test_bind_omits_unset_optional_fields():
 
 
 def test_register_agent_returns_new_agent_id():
-    fake = _FakeIrl({"/irl/agents": (201, {"id": "agent-uuid", "name": "bot"})})
+    # Shape returned by IRL v1.3.0's register_agent handler (its SDK wrongly reads "id").
+    fake = _FakeIrl({"/irl/agents": (201, {"agent_id": "agent-uuid", "name": "bot"})})
 
     agent_id = _run(
         fake,

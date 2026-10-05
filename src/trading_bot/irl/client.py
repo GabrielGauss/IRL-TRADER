@@ -162,7 +162,7 @@ class IrlClient:
     async def register_agent(self, *, name: str, model_hash_hex: str, max_notional: float) -> str:
         payload = {"name": name, "model_hash_hex": model_hash_hex, "max_notional": max_notional}
         data = await self._request("POST", "/irl/agents", payload)
-        return str(data["id"])
+        return str(data["agent_id"])
 
     async def close(self) -> None:
         if self._session is not None:
