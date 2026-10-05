@@ -159,6 +159,8 @@ then rejects intents until you register again (step 3) and update
 | Audit trail | `docker exec trading-bot tail -n 50 /data/trade_audit.log` |
 | Update | `git pull && docker compose -f deploy/docker-compose.prod.yml up -d --build` |
 | Stop | `docker compose -f deploy/docker-compose.prod.yml down` (data volume is kept) |
+| IRL end-to-end check | `docker exec trading-bot trading-bot irl-canary` (authorize + bind as Rejected; never trades) |
+| Reset the paper account | stop, delete `paper_state.json` from the data volume, start |
 
 ### Kill switch
 
