@@ -60,3 +60,26 @@ class EmaRsiStrategy(Strategy):
         if rsi_now >= self.rsi_overbought:
             return Signal.SELL
         return Signal.HOLD
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        """Vectorized equivalent of generate_signal over every prefix of df.
+        EMA and RSI are recursive from the first bar, so the full-series value
+        at bar i equals the value computed on df[: i + 1] (asserted by tests);
+        no bar ever sees later data."""
+        signals = pd.Series(Signal.HOLD, index=df.index, dtype=object)
+        if len(df) < self.min_lookback:
+            return signals
+        close = df["close"]
+        fast = ta.ema(close, length=self.fast_ema)
+        slow = ta.ema(close, length=self.slow_ema)
+        rsi = ta.rsi(close, length=self.rsi_period)
+        if fast is None or slow is None or rsi is None:
+            return signals
+        rsi_prev = rsi.shift(1)
+        valid = fast.notna() & slow.notna() & rsi.notna() & rsi_prev.notna()
+        valid &= pd.Series(range(len(df)), index=df.index) >= self.min_lookback - 1
+        buy = valid & (fast > slow) & (rsi_prev <= self.rsi_oversold) & (rsi > self.rsi_oversold)
+        sell = valid & ~buy & (rsi >= self.rsi_overbought)
+        signals[sell] = Signal.SELL
+        signals[buy] = Signal.BUY
+        return signals

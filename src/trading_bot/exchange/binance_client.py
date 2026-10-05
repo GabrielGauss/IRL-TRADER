@@ -57,11 +57,14 @@ class BinanceClient:
 
     def get_klines(self, symbol: str, interval: str, limit: int = 500) -> pd.DataFrame:
         raw = self._client.get_klines(symbol=symbol, interval=interval, limit=limit)
-        df = pd.DataFrame(raw, columns=KLINE_COLUMNS)
-        numeric_cols = ["open", "high", "low", "close", "volume"]
-        df[numeric_cols] = df[numeric_cols].astype(float)
-        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
-        return df[["open_time", "open", "high", "low", "close", "volume"]]
+        return _klines_frame(raw)
+
+    def get_historical_klines(
+        self, symbol: str, interval: str, start: str, end: str | None = None
+    ) -> pd.DataFrame:
+        """Any length of history (python-binance paginates the 1000-bar limit)."""
+        raw = self._client.get_historical_klines(symbol, interval, start, end)
+        return _klines_frame(raw)
 
     def get_balance(self, asset: str) -> float:
         info = self._client.get_asset_balance(asset=asset)
@@ -84,3 +87,11 @@ class BinanceClient:
             quantity=quantity,
             status=response["status"],
         )
+
+
+def _klines_frame(raw: list[list[object]]) -> pd.DataFrame:
+    df = pd.DataFrame(raw, columns=KLINE_COLUMNS)
+    numeric_cols = ["open", "high", "low", "close", "volume"]
+    df[numeric_cols] = df[numeric_cols].astype(float)
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
+    return df[["open_time", "open", "high", "low", "close", "volume"]]

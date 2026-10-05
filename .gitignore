@@ -20,3 +20,4 @@ venv/
 kill_switch.tripped
 *.log
 paper_state.json
+data/
