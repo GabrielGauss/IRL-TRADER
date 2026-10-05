@@ -9,32 +9,16 @@ same test windows at the same costs and position size.
 
 from __future__ import annotations
 
-import itertools
 import math
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 
 import pandas as pd
 
 from trading_bot.backtest.engine import simulate
+from trading_bot.backtest.grids import ParamGrid, Params, StrategyGrid
 from trading_bot.backtest.metrics import Summary, buy_and_hold, summarize
-from trading_bot.strategy.ema_rsi import EmaRsiStrategy
 
-
-@dataclass(frozen=True)
-class ParamGrid:
-    fast_ema: tuple[int, ...] = (8, 12, 20)
-    slow_ema: tuple[int, ...] = (26, 50)
-    rsi_period: tuple[int, ...] = (14,)
-    rsi_oversold: tuple[float, ...] = (25.0, 30.0, 35.0)
-    rsi_overbought: tuple[float, ...] = (65.0, 70.0, 75.0)
-
-    def combinations(self) -> list[dict[str, float]]:
-        names = [f.name for f in fields(self)]
-        combos = [
-            dict(zip(names, values))
-            for values in itertools.product(*(getattr(self, n) for n in names))
-        ]
-        return [c for c in combos if c["fast_ema"] < c["slow_ema"]]
+__all__ = ["Fold", "ParamGrid", "WalkForwardReport", "verdict", "walk_forward"]
 
 
 @dataclass(frozen=True)
@@ -43,7 +27,7 @@ class Fold:
     train_end: int
     test_start: int
     test_end: int
-    params: dict[str, float]
+    params: Params
     in_sample: Summary
     oos: Summary
     benchmark: Summary
@@ -68,6 +52,10 @@ class WalkForwardReport:
     @property
     def mean_oos_sharpe(self) -> float:
         return sum(f.oos.sharpe for f in self.folds) / len(self.folds)
+
+    @property
+    def mean_benchmark_sharpe(self) -> float:
+        return sum(f.benchmark.sharpe for f in self.folds) / len(self.folds)
 
     @property
     def oos_trades(self) -> int:
@@ -101,7 +89,7 @@ def _compound(returns_pct) -> float:
 
 def walk_forward(
     df: pd.DataFrame,
-    grid: ParamGrid,
+    grid: StrategyGrid,
     *,
     interval: str,
     train_bars: int,
@@ -131,7 +119,7 @@ def walk_forward(
         window = df.iloc[start:test_end].reset_index(drop=True)
 
         best_params, best_summary = _best_on_train(train, grid, interval, costs)
-        strategy = EmaRsiStrategy(**best_params)  # type: ignore[arg-type]
+        strategy = grid.build(best_params)
         # Indicators see the training bars as history; trading starts flat at the test window.
         oos = simulate(
             window, strategy.generate_signals(window), start=train_bars, fill="next_open", **costs
@@ -153,15 +141,15 @@ def walk_forward(
 
 
 def _best_on_train(
-    train: pd.DataFrame, grid: ParamGrid, interval: str, costs: dict[str, float]
-) -> tuple[dict[str, float], Summary]:
-    best: tuple[dict[str, float], Summary] | None = None
+    train: pd.DataFrame, grid: StrategyGrid, interval: str, costs: dict[str, float]
+) -> tuple[Params, Summary]:
+    best: tuple[Params, Summary] | None = None
     for params in grid.combinations():
-        strategy = EmaRsiStrategy(**params)  # type: ignore[arg-type]
+        strategy = grid.build(params)
         result = simulate(
             train,
             strategy.generate_signals(train),
-            start=strategy.min_lookback,
+            start=getattr(strategy, "min_lookback", 0),
             fill="next_open",
             **costs,
         )

@@ -248,3 +248,64 @@ def test_walkforward_command_prints_fold_table_and_verdict(monkeypatch, capsys):
     assert "fold" in out.lower()
     assert "Out-of-sample" in out
     assert "Buy & hold" in out
+
+
+def test_walkforward_runs_a_chosen_strategy_with_param_overrides(monkeypatch, capsys):
+    monkeypatch.setattr(cli_backtest, "load_public_data_settings", lambda use_testnet: object())
+    monkeypatch.setattr(cli_backtest, "BinanceClient", lambda settings: object())
+    monkeypatch.setattr(cli_backtest, "load_history", lambda *a, **k: _history(900))
+
+    exit_code = cli.main(
+        [
+            "walkforward",
+            "--start",
+            "2024-01-01",
+            "--train-bars",
+            "400",
+            "--test-bars",
+            "250",
+            "--strategy",
+            "donchian",
+            "--param",
+            "entry_period=20",
+            "--param",
+            "exit_period=10",
+            "--param",
+            "trend_period=0",
+        ]
+    )
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "donchian" in out
+    assert "in 20 out 10" in out
+    assert "Buy & hold Sharpe (mean):" in out
+    assert "Verdict:" in out
+
+
+def test_build_grid_casts_overrides_to_the_axis_type():
+    grid = cli_backtest.build_grid("momentum", {"lookback": "24,48", "threshold_pct": "1.5"})
+
+    assert grid.lookback == (24, 48)
+    assert grid.threshold_pct == (1.5,)
+
+
+@pytest.mark.parametrize(
+    "strategy, overrides, message",
+    [
+        ("donchian", {"nope": "1"}, "no parameter"),
+        ("donchian", {"entry_period": "10", "exit_period": "20"}, "no valid parameter"),
+    ],
+)
+def test_build_grid_rejects_unknown_axes_and_empty_grids(strategy, overrides, message):
+    with pytest.raises(SystemExit, match=message):
+        cli_backtest.build_grid(strategy, overrides)
+
+
+def test_ema_grid_flags_are_rejected_for_other_strategies(monkeypatch):
+    def no_network(*args, **kwargs):
+        raise AssertionError("must validate the grid before fetching data")
+
+    monkeypatch.setattr(cli_backtest, "BinanceClient", no_network)
+    with pytest.raises(SystemExit, match="only applies to ema_rsi"):
+        cli.main(["walkforward", "--strategy", "momentum", "--fast-ema-grid", "5"])
