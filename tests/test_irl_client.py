@@ -334,3 +334,33 @@ def test_authorize_omits_heartbeat_by_default():
     _run(fake, _authorize)
 
     assert "heartbeat" not in fake.requests[0][2]
+
+
+def test_get_regime_returns_current_mta_ref():
+    fake = _FakeIrl({"/irl/regime": (200, {"mta_ref": "ref-1", "regime_label": "expansion"})})
+
+    assert _run(fake, lambda client: client.get_regime()) == "ref-1"
+    assert fake.requests[0][1]["Authorization"] == f"Bearer {_TOKEN}"
+
+
+def test_get_regime_without_ref_is_unavailable():
+    fake = _FakeIrl({"/irl/regime": (200, {"regime_label": "expansion"})})
+
+    with pytest.raises(IrlUnavailable):
+        _run(fake, lambda client: client.get_regime())
+
+
+def test_authorize_includes_mta_ref_when_given():
+    fake = _FakeIrl(
+        {
+            "/irl/authorize": (
+                200,
+                {"trace_id": _TRACE_ID, "reasoning_hash": "c", "authorized": True},
+            )
+        }
+    )
+
+    _run(fake, lambda client: _authorize(client, mta_ref="ref-1"))
+
+    assert fake.requests[0][2]["mta_ref"] == "ref-1"
+    assert "heartbeat" not in fake.requests[0][2]

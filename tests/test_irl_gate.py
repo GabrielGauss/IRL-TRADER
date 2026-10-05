@@ -235,3 +235,44 @@ def test_irl_gate_without_heartbeat_source_sends_none():
     asyncio.run(_gate(client).execute(_paper_broker(), _BUY, price=100.0))
 
     assert client.authorize.await_args.kwargs["heartbeat"] is None
+
+
+def _regime_gate(client) -> IrlGate:
+    return IrlGate(
+        client,
+        _IDENTITY,
+        venue_id="BINANCE-PAPER",
+        notional_currency="USDT",
+        use_regime_ref=True,
+    )
+
+
+def test_regime_ref_mode_sends_fresh_ref_and_no_heartbeat():
+    client = _irl_client()
+    client.get_regime.return_value = "ref-now"
+
+    asyncio.run(_regime_gate(client).execute(_paper_broker(), _BUY, price=100.0))
+
+    kwargs = client.authorize.await_args.kwargs
+    assert kwargs["mta_ref"] == "ref-now"
+    assert kwargs["heartbeat"] is None
+
+
+def test_regime_ref_unavailable_blocks_order():
+    broker = AsyncMock(wraps=_paper_broker())
+    client = _irl_client()
+    client.get_regime.side_effect = IrlUnavailable(503, "MTA_FETCH_FAILED", "down")
+
+    with pytest.raises(OrderBlocked):
+        asyncio.run(_regime_gate(client).execute(broker, _BUY, price=100.0))
+
+    client.authorize.assert_not_awaited()
+    broker.place_order.assert_not_awaited()
+
+
+def test_heartbeat_mode_sends_no_mta_ref():
+    client = _irl_client()
+
+    asyncio.run(_gate(client).execute(_paper_broker(), _BUY, price=100.0))
+
+    assert client.authorize.await_args.kwargs["mta_ref"] is None

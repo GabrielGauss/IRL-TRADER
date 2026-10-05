@@ -85,12 +85,16 @@ class IrlGate:
         venue_id: str,
         notional_currency: str,
         heartbeat_source: HeartbeatSource | None = None,
+        use_regime_ref: bool = False,
     ):
         self._client = client
         self._identity = identity
         self._venue_id = venue_id
         self._notional_currency = notional_currency
         self._heartbeat_source = heartbeat_source
+        # Layer 2 v2: bind to IRL's own verified regime ref instead of a
+        # MacroPulse-signed heartbeat (no 200 ms window, no second credential).
+        self._use_regime_ref = use_regime_ref
 
     async def execute(self, broker: Broker, plan: OrderPlan, *, price: float) -> ExecutionResult:
         client_order_id = _CLIENT_ORDER_ID_PREFIX + uuid.uuid4().hex
@@ -98,7 +102,12 @@ class IrlGate:
         try:
             # Fetched right before authorize: IRL rejects heartbeats older
             # than its drift window (200 ms by default).
-            heartbeat = await self._heartbeat_source.fetch() if self._heartbeat_source else None
+            mta_ref = await self._client.get_regime() if self._use_regime_ref else None
+            heartbeat = (
+                await self._heartbeat_source.fetch()
+                if self._heartbeat_source and not self._use_regime_ref
+                else None
+            )
             auth = await self._client.authorize(
                 self._identity,
                 is_buy=is_buy,
@@ -109,6 +118,7 @@ class IrlGate:
                 venue_id=self._venue_id,
                 client_order_id=client_order_id,
                 heartbeat=heartbeat,
+                mta_ref=mta_ref,
             )
         except IrlDenied as exc:
             raise OrderBlocked(f"IRL denied: {exc}", policy_denied=True) from exc

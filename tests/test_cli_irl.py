@@ -260,3 +260,46 @@ def test_irl_canary_requires_irl_settings(monkeypatch, caplog):
 
     with caplog.at_level("ERROR"):
         assert cli.cmd_irl_canary(_parse("irl-canary")) == 2
+
+
+def _irl_settings_l2(monkeypatch, mode, *, heartbeat_url="", key=None):
+    monkeypatch.setattr(
+        cli,
+        "load_irl_settings",
+        lambda: IrlSettings.model_construct(
+            irl_base_url="http://irl-engine:4000",
+            irl_api_token=SecretStr("tok"),
+            irl_agent_id=_AGENT_ID,
+            irl_heartbeat_url=heartbeat_url,
+            macropulse_api_key=SecretStr(key) if key else None,
+            irl_l2_mode=mode,
+        ),
+    )
+
+
+def test_regime_l2_mode_uses_regime_refs_and_needs_no_macropulse_key(tmp_path, monkeypatch):
+    _irl_settings_l2(monkeypatch, "regime", heartbeat_url="http://api:8000/v1/irl/heartbeat")
+
+    runtime = cli._build_serve_runtime(
+        _parse("serve", "--irl", "--db-path", str(tmp_path / "t.db"))
+    )
+
+    assert runtime.gate._use_regime_ref is True
+    assert runtime.gate._heartbeat_source is None
+    assert runtime.heartbeat_source is None
+
+
+def test_unknown_l2_mode_is_a_config_error(tmp_path, monkeypatch):
+    _irl_settings_l2(monkeypatch, "telepathy")
+
+    with pytest.raises(ValueError, match="IRL_L2_MODE"):
+        cli._build_serve_runtime(_parse("serve", "--irl", "--db-path", str(tmp_path / "t.db")))
+
+
+def test_irl_canary_in_regime_mode_sends_mta_ref(monkeypatch):
+    _irl_settings_l2(monkeypatch, "regime")
+    client = _canary_client(monkeypatch)
+    client.get_regime.return_value = "ref-now"
+
+    assert cli.cmd_irl_canary(_parse("irl-canary")) == 0
+    assert client.authorize.await_args.kwargs["mta_ref"] == "ref-now"
