@@ -11,6 +11,7 @@ import signal
 import sys
 import time
 import urllib.request
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -30,7 +31,7 @@ from trading_bot.config import (
 from trading_bot.exchange.binance_client import BinanceClient
 from trading_bot.execution.broker import Broker, CcxtBroker, PaperBroker
 from trading_bot.execution.engine import ExecutionEngine, RiskLimitBreached, RiskLimits
-from trading_bot.irl.client import AgentIdentity, IrlClient, IrlError, model_hash
+from trading_bot.irl.client import AgentIdentity, IrlClient, IrlDenied, IrlError, model_hash
 from trading_bot.irl.gate import IrlGate, OrderGate, PassthroughGate
 from trading_bot.irl.heartbeat import MacroPulseHeartbeatSource
 from trading_bot.persistence.paper_state import STATE_FILENAME as PAPER_STATE_FILENAME
@@ -508,6 +509,68 @@ def cmd_irl_register(args: argparse.Namespace) -> int:
     return 0
 
 
+# Policy denials that mean "IRL is up and evaluating" (the regime currently
+# forbids the canary's tiny long), not a broken engine.
+CANARY_HEALTHY_DENIALS = frozenset({"REGIME_VIOLATION", "REGIME_UNAUTHORIZED"})
+CANARY_QUANTITY = 0.00001
+CANARY_NOTIONAL = 1.0
+
+
+def cmd_irl_canary(args: argparse.Namespace) -> int:
+    """End-to-end IRL check that never trades: authorize a tiny intent, then
+    bind it as Rejected, which closes the trace (IRL seals rejections as
+    MATCHED). Exercises auth, agent/model hash, heartbeat, MTA verification,
+    policy and the trace + bind DB writes -- the paths that silently broke in
+    2026. Exit 0 = healthy, 1 = IRL failure, 2 = configuration error."""
+    settings = load_irl_settings()
+    try:
+        base_url, token, agent_id = _irl_connection(settings, need_agent=True)
+        heartbeat_source = _heartbeat_source(settings)
+    except ValueError as exc:
+        logger.error("irl-canary configuration error: %s", exc)
+        return 2
+    identity = _agent_identity(args, agent_id)
+    client_order_id = f"canary-{uuid.uuid4().hex}"
+
+    async def run() -> str:
+        client = IrlClient(base_url, token)
+        try:
+            heartbeat = await heartbeat_source.fetch() if heartbeat_source else None
+            auth = await client.authorize(
+                identity,
+                is_buy=True,
+                quantity=CANARY_QUANTITY,
+                asset=args.symbol,
+                notional=CANARY_NOTIONAL,
+                notional_currency="USDT",
+                venue_id=f"{args.exchange_id.upper()}-CANARY",
+                client_order_id=client_order_id,
+                heartbeat=heartbeat,
+            )
+            bound = await client.bind(
+                auth.trace_id, exchange_tx_id=client_order_id, execution_status="Rejected"
+            )
+            return f"trace {auth.trace_id} bound as {bound.verification_status}"
+        finally:
+            await client.close()
+            if heartbeat_source is not None:
+                await heartbeat_source.close()
+
+    try:
+        result = asyncio.run(run())
+    except IrlDenied as exc:
+        if exc.code in CANARY_HEALTHY_DENIALS:
+            print(f"IRL canary OK: policy denied by current regime ({exc.code})")
+            return 0
+        logger.error("IRL canary FAILED: %s", exc)
+        return 1
+    except IrlError as exc:
+        logger.error("IRL canary FAILED: %s", exc)
+        return 1
+    print(f"IRL canary OK: {result}")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     base_url = f"http://{args.host}:{args.port}"
     try:
@@ -635,6 +698,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="IRL notional cap per order, in quote currency",
     )
     register_parser.set_defaults(func=cmd_irl_register)
+
+    canary_parser = subparsers.add_parser(
+        "irl-canary",
+        help="End-to-end IRL check (authorize + bind as Rejected); never trades",
+    )
+    _add_identity_args(canary_parser)
+    canary_parser.set_defaults(func=cmd_irl_canary)
 
     status_parser = subparsers.add_parser(
         "status", help="Query a running `serve` instance's health and metrics"
