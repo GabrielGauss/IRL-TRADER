@@ -17,6 +17,7 @@ from trading_bot.strategy.donchian import DonchianBreakoutStrategy
 from trading_bot.strategy.ema_rsi import EmaRsiStrategy
 from trading_bot.strategy.mean_reversion import RsiMeanReversionStrategy
 from trading_bot.strategy.momentum import MomentumStrategy
+from trading_bot.strategy.vol_target import VolTargetTrendStrategy
 
 Params = dict[str, float]
 
@@ -136,3 +137,38 @@ GRIDS: dict[str, type] = {
     "momentum": MomentumGrid,
     "mean_reversion": MeanReversionGrid,
 }
+
+
+@dataclass(frozen=True)
+class VolTargetGrid:
+    """Fractional-position grid (backtested by backtest.weights, not the signal engine)."""
+
+    trend_period: tuple[int, ...] = (0, 50, 100, 200)
+    vol_period: tuple[int, ...] = (20, 60)
+    target_vol: tuple[float, ...] = (0.4, 0.6, 0.8)
+    interval: str = "1d"
+
+    def combinations(self) -> list[Params]:
+        names = ("trend_period", "vol_period", "target_vol")
+        return [
+            dict(zip(names, values))
+            for values in itertools.product(*(getattr(self, n) for n in names))
+        ]
+
+    def build(self, params: Params) -> VolTargetTrendStrategy:
+        return VolTargetTrendStrategy(
+            trend_period=int(params["trend_period"]),
+            vol_period=int(params["vol_period"]),
+            target_vol=params["target_vol"],
+            interval=self.interval,
+        )
+
+    def describe(self, params: Params) -> str:
+        trend = int(params["trend_period"])
+        return (
+            f"{'sma ' + str(trend) if trend else 'no trend'} vol{int(params['vol_period'])} "
+            f"tgt {params['target_vol']:.0%}"
+        )
+
+
+WEIGHT_GRIDS: dict[str, type] = {"vol_target": VolTargetGrid}

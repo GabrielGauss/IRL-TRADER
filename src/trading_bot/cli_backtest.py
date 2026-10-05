@@ -16,9 +16,10 @@ import pandas as pd
 
 from trading_bot.backtest.data import load_history
 from trading_bot.backtest.engine import run_backtest
-from trading_bot.backtest.grids import GRIDS, ParamGrid, StrategyGrid
+from trading_bot.backtest.grids import GRIDS, WEIGHT_GRIDS, ParamGrid, StrategyGrid
 from trading_bot.backtest.metrics import Summary, buy_and_hold, summarize
 from trading_bot.backtest.walkforward import verdict, walk_forward
+from trading_bot.cli_weights import run_weight_walkforward
 from trading_bot.config import load_public_data_settings
 from trading_bot.exchange.binance_client import BinanceClient
 from trading_bot.strategy.ema_rsi import EmaRsiStrategy
@@ -55,7 +56,13 @@ def add_backtest_commands(
         help="Choose strategy params on a training window, score them on the next unseen window",
     )
     _add_data_args(wf)
-    wf.add_argument("--strategy", choices=sorted(GRIDS), default="ema_rsi")
+    wf.add_argument("--strategy", choices=sorted({**GRIDS, **WEIGHT_GRIDS}), default="ema_rsi")
+    wf.add_argument(
+        "--rebalance-band",
+        type=float,
+        default=0.05,
+        help="vol_target only: skip rebalances smaller than this fraction of equity",
+    )
     wf.add_argument(
         "--param",
         action="append",
@@ -154,6 +161,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 def cmd_walkforward(args: argparse.Namespace) -> int:
     grid = build_grid(args.strategy, _grid_overrides(args))
     df = _load(args)
+    if args.strategy in WEIGHT_GRIDS:
+        return run_weight_walkforward(args, grid, df)  # type: ignore[arg-type]
     report = walk_forward(
         df,
         grid,
@@ -228,8 +237,12 @@ def _grid_overrides(args: argparse.Namespace) -> dict[str, str]:
 
 def build_grid(strategy: str, overrides: dict[str, str]) -> StrategyGrid:
     """Default grid for `strategy` with some axes replaced by comma-separated values."""
-    grid = GRIDS[strategy]()
-    axes = {f.name: getattr(grid, f.name) for f in dataclasses.fields(grid)}
+    grid = (GRIDS.get(strategy) or WEIGHT_GRIDS[strategy])()
+    axes = {
+        f.name: getattr(grid, f.name)
+        for f in dataclasses.fields(grid)
+        if isinstance(getattr(grid, f.name), tuple)
+    }
     replaced = {}
     for name, text in overrides.items():
         if name not in axes:

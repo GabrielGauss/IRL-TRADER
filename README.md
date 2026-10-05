@@ -10,6 +10,33 @@ and bound back to its sealed reasoning trace afterwards. How the project got
 here, including what wiring it end-to-end uncovered in IRL, is told in
 [docs/JOURNEY.md](docs/JOURNEY.md).
 
+## The agent (`trading-bot agent`)
+
+The bot's main mode is now an agent that trades **through
+[irl-gateway](https://github.com/macropulse-lab/irl-gateway) over MCP**, the
+same way any third-party AI agent would. It never touches the exchange
+directly. Once a day, just after the daily close:
+
+1. It re-selects the volatility-target core's parameters on the trailing
+   730 completed days and computes the target BTC weight. This is exactly
+   the procedure that passed walk-forward
+   ([docs/research/2026-10-05-vol-target-core.md](docs/research/2026-10-05-vol-target-core.md)).
+2. It reads balances and price from the gateway. If the position is more
+   than 5% of equity away from the target, it calls `execute_trade` with a
+   written rationale (parameters, close vs SMA, realized vs target
+   volatility, current vs target weight). IRL checks the mandate, seals the
+   rationale's hash, and binds the fill as MATCHED or DIVERGENT.
+
+```bash
+pip install -e ".[agent]"            # adds mcp + irl-gateway
+export IRL_BASE_URL=... IRL_API_TOKEN=... IRL_AGENT_ID=... IRL_MODEL_HASH=...
+trading-bot agent                    # one cycle, JSON report
+trading-bot agent --loop             # daily, 5 minutes after 00:00 UTC
+```
+
+The gateway is configured by its own environment variables (paper trading
+by default, with the paper account persisted in `IRL_GATEWAY_HOME`).
+
 ## Two stacks
 
 This repo contains two parallel implementations, now both runnable from the
@@ -32,6 +59,7 @@ config.Settings -> exchange.BinanceClient -> strategy.EmaRsiStrategy
 trading-bot backtest --symbol BTCUSDT --interval 1h --start 2025-01-01   # realistic costs + B&H benchmark
 trading-bot walkforward --start 2024-10-01 --end 2026-10-01             # out-of-sample evaluation
 trading-bot walkforward --strategy momentum --param lookback=100,200 ... # ema_rsi|donchian|momentum|mean_reversion
+trading-bot walkforward --interval 1d --start 2018-01-01 --train-bars 730 --test-bars 182 --strategy vol_target
 trading-bot run --once      # single testnet iteration
 trading-bot run              # live poll loop (Ctrl+C to stop)
 ```
@@ -151,8 +179,16 @@ the commit history for the smoke-test transcript.
       and 4h, 2022-2026. **No candidate beats buy and hold on return or
       Sharpe out of sample**; see
       [docs/research/2026-10-05-phase3-walkforward.md](docs/research/2026-10-05-phase3-walkforward.md).
-- [ ] Internal strategy as a signal source + signal combiner (with
-      per-source webhook credentials)
+- [x] Volatility-targeted trend core with a fractional-position backtester
+      judged on the stitched out-of-sample curve. **Passes on BTC** (Sharpe
+      1.03 vs 0.85, max drawdown 42% vs 76%) and fails on ETH; see
+      [docs/research/2026-10-05-vol-target-core.md](docs/research/2026-10-05-vol-target-core.md).
+- [x] `trading-bot agent`: the core trading through irl-gateway (MCP) with a
+      sealed rationale on every trade; verified end to end against IRL.
+- [ ] An LLM reviewer that can veto or shrink the core's trades, its
+      reasoning sealed the same way
+- [ ] External signals (TradingView) as a second source, with per-source
+      webhook credentials
 - [ ] Weeks of paper trading on the VPS -> Binance testnet -> small live
       (< $500, spot, tight kill switch)
 - [ ] Live trading via `serve` for exchanges other than Binance (needs a

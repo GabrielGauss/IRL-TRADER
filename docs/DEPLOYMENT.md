@@ -138,6 +138,38 @@ Changing the version or any strategy/risk flag changes the model hash, and IRL
 then rejects intents until you register again (step 3) and update
 `IRL_AGENT_ID`.
 
+## 6b. The volatility-target agent (paper, through irl-gateway)
+
+The agent runs as its own container (`trading-agent`), separate from the
+signal bot, with its own IRL agent and its **own IRL token** (one credential
+per source).
+
+1. Issue a client token with the owner token, and register the agent with a
+   tight mandate:
+
+   ```bash
+   OWNER=$(cat /root/irl-owner-token)
+   curl -s -X POST http://irl-engine:4000/irl/admin/tokens -H "Authorization: Bearer $OWNER"      -H 'Content-Type: application/json' -d '{"client_name":"vol-target-agent"}'
+   curl -s -X POST http://irl-engine:4000/irl/agents -H "Authorization: Bearer <client token>"      -H 'Content-Type: application/json' -d '{"name":"vol-target-agent",
+       "model_hash_hex":"<sha256 of the agent config>","max_notional":1000,
+       "allowed_assets":["BTC/USDT"],"allowed_venues":["paper-binance"]}'
+   ```
+
+2. Write `/opt/trading-bot/.env.agent` (mode 600): `IRL_BASE_URL=http://irl-engine:4000`,
+   `IRL_API_TOKEN`, `IRL_AGENT_ID`, `IRL_MODEL_HASH`, `IRL_L2_MODE=regime`,
+   `AGENT_MODEL_ID=vol-target-core/1`, `PAPER_BALANCES=USDT=1000`.
+
+3. Start it. The first cycle runs immediately, then daily at 00:05 UTC:
+
+   ```bash
+   cd /opt/trading-bot && docker compose -f deploy/docker-compose.agent.yml up -d --build
+   docker logs -f trading-agent        # one JSON report per cycle
+   ```
+
+The paper account, journal (every rationale with its sealed hash) and kill
+switch live in the `trading_agent_data` volume under `/data/gateway`. To stop
+all trading immediately: `docker exec trading-agent touch /data/gateway/KILL`.
+
 ## 7. Going live (Binance testnet first)
 
 1. Create an API key with **withdrawals disabled** and **restricted to the VPS

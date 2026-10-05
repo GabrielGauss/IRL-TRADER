@@ -10,7 +10,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml ./
 COPY src ./src
-RUN pip install .
+# EXTRAS=agent adds mcp + irl-gateway for `trading-bot agent`.
+ARG EXTRAS=""
+RUN if [ -n "$EXTRAS" ]; then pip install ".[$EXTRAS]"; else pip install .; fi
 
 # Non-root; /data holds the SQLite DB, audit log, and kill-switch latch.
 RUN useradd --create-home --uid 10001 bot \

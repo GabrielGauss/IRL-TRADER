@@ -20,6 +20,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from trading_bot.cli_agent import add_agent_command
 from trading_bot.cli_backtest import add_backtest_commands, cmd_backtest  # noqa: F401
 from trading_bot.config import (
     IrlSettings,
@@ -594,6 +595,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     add_backtest_commands(subparsers, _add_strategy_arguments)
+    add_agent_command(subparsers)
 
     run_parser = subparsers.add_parser("run", help="Run the live/testnet trading loop")
     run_parser.add_argument("--base-asset", default="BTC")
