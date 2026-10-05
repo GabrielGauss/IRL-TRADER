@@ -20,8 +20,7 @@ trading-bot = "trading_bot.cli:main"
 # `trading-bot agent` talks to irl-gateway over MCP.
 agent = [
     "mcp>=2.3,<3",
-    # Archive URL rather than git+https: the slim Docker image has no git.
-    "irl-gateway @ https://github.com/macropulse-lab/irl-gateway/archive/refs/heads/main.zip",
+    "irl-gateway>=0.2,<0.3",
 ]
 dev = [
     "pytest>=8.0",
