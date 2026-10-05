@@ -13,6 +13,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from aiohttp import web
 
@@ -280,8 +281,35 @@ async def _run_serve_runtime(runtime: ServeRuntime, args: argparse.Namespace) ->
     return 1 if runtime.controller.health.status().kill_switch_tripped else 0
 
 
+KILL_SWITCH_LATCH_FILENAME = "kill_switch.tripped"
+EXIT_KILL_SWITCH_LATCHED = 3
+
+
+def _kill_switch_latch_path(args: argparse.Namespace) -> Path:
+    """Lives next to the trade DB so it shares the same persistent volume."""
+    return Path(args.db_path).resolve().parent / KILL_SWITCH_LATCH_FILENAME
+
+
+def _write_kill_switch_latch(latch: Path, last_error: str | None) -> None:
+    latch.write_text(
+        json.dumps({"tripped_at": datetime.now(UTC).isoformat(), "last_error": last_error})
+    )
+    logger.error("Kill switch tripped; latched at %s. Delete it to allow trading again.", latch)
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     configure_logging(json_output=not args.plain_logs)
+    # The in-process kill switch resets on restart, so a supervisor (Docker
+    # restart policy, systemd) would silently resume trading after a trip.
+    # Persist the trip and refuse to start until a human removes the latch.
+    latch = _kill_switch_latch_path(args)
+    if latch.exists():
+        logger.error(
+            "Refusing to start: kill switch latched (%s). Review, then delete %s to resume.",
+            latch.read_text().strip(),
+            latch,
+        )
+        return EXIT_KILL_SWITCH_LATCHED
     try:
         runtime = _build_serve_runtime(args)
     except ValueError as exc:  # includes pydantic ValidationError from settings
@@ -290,7 +318,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # Only create the audit log once config is known-good, so a refused start
     # doesn't leave an empty log file behind.
     get_audit_logger(args.audit_log)
-    return asyncio.run(_run_serve_runtime(runtime, args))
+    exit_code = asyncio.run(_run_serve_runtime(runtime, args))
+    status = runtime.controller.health.status()
+    if status.kill_switch_tripped:
+        _write_kill_switch_latch(latch, status.last_error)
+    return exit_code
 
 
 def cmd_status(args: argparse.Namespace) -> int:

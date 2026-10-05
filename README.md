@@ -64,8 +64,14 @@ via `serve` is currently wired for `--exchange-id binance` only -- paper mode
 works against any ccxt exchange id since it only needs public price data.
 
 The kill switch latches: once tripped (drawdown or daily-loss limit
-breached), `serve` stops placing new orders and reports `healthy: false` via
-`/health` until the process is restarted.
+breached), `serve` stops placing new orders and exits, writing a
+`kill_switch.tripped` file next to the trade DB. While that file exists,
+`serve` refuses to start (exit code 3), so a supervisor such as Docker's
+restart policy can't silently resume trading; delete it after reviewing the
+trip.
+
+Deploying behind an existing nginx on a VPS (Docker, TLS, TradingView setup,
+going live): see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Setup
 
@@ -87,7 +93,7 @@ isort src tests
 mypy src/trading_bot
 ```
 
-222 tests, 95% coverage as of the last commit. `serve`'s async server
+231 tests, 95% coverage as of the last commit. `serve`'s async server
 lifecycle (signal handlers, task orchestration) is intentionally left out of
 the automated suite and verified with a real running instance instead -- see
 the commit history for the smoke-test transcript.
