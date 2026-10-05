@@ -149,7 +149,7 @@ per source).
 
    ```bash
    OWNER=$(cat /root/irl-owner-token)
-   curl -s -X POST http://irl-engine:4000/irl/admin/tokens -H "Authorization: Bearer $OWNER"      -H 'Content-Type: application/json' -d '{"label":"vol-target-agent","role":"client"}'
+   curl -s -X POST http://irl-engine:4000/irl/admin/tokens -H "Authorization: Bearer $OWNER"      -H 'Content-Type: application/json' -d '{"client_name":"vol-target-agent"}'
    curl -s -X POST http://irl-engine:4000/irl/agents -H "Authorization: Bearer <client token>"      -H 'Content-Type: application/json' -d '{"name":"vol-target-agent",
        "model_hash_hex":"<sha256 of the agent config>","max_notional":1000,
        "allowed_assets":["BTC/USDT"],"allowed_venues":["paper-binance"]}'
