@@ -4,6 +4,12 @@ A Binance spot trading bot with a tested backtest/live-execution path, plus a
 newer signal-driven, exchange-agnostic async stack (`serve`) with its own
 webhook ingestion, risk engine, order routing, and health/metrics reporting.
 
+It is also the reference client for the **IRL Engine** (Immutable Reasoning
+Log): with `serve --irl`, every order is authorized by IRL before it is placed
+and bound back to its sealed reasoning trace afterwards. How the project got
+here, including what wiring it end-to-end uncovered in IRL, is told in
+[docs/JOURNEY.md](docs/JOURNEY.md).
+
 ## Two stacks
 
 This repo contains two parallel implementations, now both runnable from the
@@ -42,7 +48,8 @@ POST /signals -> signals.SignalIngestor -> signals.SignalQueue
   -> runtime.TradingController:
        risk.signal_to_target_position (sizing)
        risk.KillSwitch + risk.DrawdownMonitor (one reconciled risk check)
-       execution.route_to_target -> execution.CcxtBroker | PaperBroker
+       execution.plan_order -> irl.gate (PassthroughGate | IrlGate)
+         -> execution.CcxtBroker | PaperBroker
        persistence.TradeRepository (same store as the proven stack)
        runtime.logging_config's audit logger (JSON trade audit trail)
   -> GET /health, GET /metrics (runtime.HealthMonitor, runtime.metrics)
@@ -52,6 +59,9 @@ POST /signals -> signals.SignalIngestor -> signals.SignalQueue
 trading-bot serve                          # paper mode (default), Binance market data, no real orders
 trading-bot serve --live                   # real orders, Binance only, same credential/opt-in gate as `run`
 trading-bot status                         # query a running `serve` instance's /health + /metrics
+trading-bot serve --irl                    # every order through IRL authorize -> place -> bind
+trading-bot irl-register --max-notional 200  # register this strategy/risk config as an IRL agent
+trading-bot irl-canary                     # end-to-end IRL check; authorizes, binds as Rejected, never trades
 curl -X POST localhost:8080/signals \
   -H "Content-Type: application/json" \
   -d '{"source": "my-strategy", "symbol": "BTC/USDT", "action": "BUY"}'
@@ -69,6 +79,16 @@ breached), `serve` stops placing new orders and exits, writing a
 `serve` refuses to start (exit code 3), so a supervisor such as Docker's
 restart policy can't silently resume trading; delete it after reviewing the
 trip.
+
+In paper mode the simulated account (balances and portfolio) is saved to
+`paper_state.json` next to the trade DB after every fill and restored at
+startup, so deploys and restarts don't reset it. A corrupt file stops startup
+instead of silently starting a fresh account; delete it to reset on purpose.
+
+With `--irl`, a denied or failed authorization never places the order: the
+signal is skipped, audited as `order blocked`, and the bot keeps running.
+Fill audit records carry the IRL trace id, reasoning hash, final proof and
+verification status.
 
 Deploying behind an existing nginx on a VPS (Docker, TLS, TradingView setup,
 going live): see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
@@ -93,7 +113,7 @@ isort src tests
 mypy src/trading_bot
 ```
 
-285 tests, 96% coverage as of the last commit. `serve`'s async server
+301 tests, 96% coverage as of the last commit. `serve`'s async server
 lifecycle (signal handlers, task orchestration) is intentionally left out of
 the automated suite and verified with a real running instance instead -- see
 the commit history for the smoke-test transcript.
@@ -115,5 +135,14 @@ the commit history for the smoke-test transcript.
       coverage floor on Ubuntu + Windows, Python 3.12/3.13)
 - [x] IRL Engine gate (`serve --irl`): every order authorized, placed with
       the sealed client id, and bound back to its IRL trace; fails closed
+- [x] Docker deployment behind a shared nginx, webhook auth, persistent
+      kill-switch latch, paper account persisted across restarts
+- [x] `irl-canary`: scheduled end-to-end IRL check (via the VPS monitoring)
+- [ ] Honest backtester: fees, slippage, out-of-sample / walk-forward,
+      buy-and-hold benchmark
+- [ ] Internal strategy as a signal source + signal combiner (with
+      per-source webhook credentials)
+- [ ] Weeks of paper trading on the VPS -> Binance testnet -> small live
+      (< $500, spot, tight kill switch)
 - [ ] Live trading via `serve` for exchanges other than Binance (needs a
       credential story beyond the Binance-shaped `Settings` fields)
