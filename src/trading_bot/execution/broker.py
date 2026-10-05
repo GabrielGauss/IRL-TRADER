@@ -46,7 +46,14 @@ class Broker(ABC):
     async def get_price(self, symbol: str) -> float: ...
 
     @abstractmethod
-    async def place_order(self, symbol: str, side: OrderSide, quantity: float) -> Fill: ...
+    async def place_order(
+        self,
+        symbol: str,
+        side: OrderSide,
+        quantity: float,
+        *,
+        client_order_id: str | None = None,
+    ) -> Fill: ...
 
     @abstractmethod
     async def close(self) -> None:
@@ -93,8 +100,28 @@ class CcxtBroker(Broker):
         ticker = await self._exchange.fetch_ticker(symbol)
         return float(ticker["last"])
 
-    async def place_order(self, symbol: str, side: OrderSide, quantity: float) -> Fill:
-        order = await self._exchange.create_order(symbol, "market", side.value.lower(), quantity)
+    async def place_order(
+        self,
+        symbol: str,
+        side: OrderSide,
+        quantity: float,
+        *,
+        client_order_id: str | None = None,
+    ) -> Fill:
+        if client_order_id is None:
+            order = await self._exchange.create_order(
+                symbol, "market", side.value.lower(), quantity
+            )
+        else:
+            # ccxt's unified param; mapped to newClientOrderId on Binance.
+            order = await self._exchange.create_order(
+                symbol,
+                "market",
+                side.value.lower(),
+                quantity,
+                None,
+                {"clientOrderId": client_order_id},
+            )
         price = order.get("average") or order.get("price") or 0.0
         fee = order.get("fee") or {}
         return Fill(
@@ -140,7 +167,14 @@ class PaperBroker(Broker):
     async def get_price(self, symbol: str) -> float:
         return await self._price_source(symbol)
 
-    async def place_order(self, symbol: str, side: OrderSide, quantity: float) -> Fill:
+    async def place_order(
+        self,
+        symbol: str,
+        side: OrderSide,
+        quantity: float,
+        *,
+        client_order_id: str | None = None,
+    ) -> Fill:
         if quantity <= 0:
             raise ValueError("quantity must be positive")
         base_asset, quote_asset = _split_symbol(symbol)
@@ -170,7 +204,7 @@ class PaperBroker(Broker):
             self._balances[quote_asset] = self._balances.get(quote_asset, 0.0) + notional - fee
 
         return Fill(
-            order_id=str(next(self._order_ids)),
+            order_id=client_order_id or str(next(self._order_ids)),
             symbol=symbol,
             side=side,
             quantity=quantity,

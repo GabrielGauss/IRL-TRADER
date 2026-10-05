@@ -111,3 +111,13 @@ def test_order_ids_are_unique_across_fills():
 def test_unconfigured_asset_defaults_to_zero_balance():
     broker = PaperBroker(_price_source(100.0), initial_balances={"USDT": 1000.0})
     assert asyncio.run(broker.get_balance("ETH")) == 0.0
+
+
+def test_client_order_id_becomes_the_paper_order_id():
+    broker = PaperBroker(_price_source(100.0), initial_balances={"USDT": 1000.0})
+
+    fill = asyncio.run(
+        broker.place_order("BTC/USDT", OrderSide.BUY, 0.01, client_order_id="irl-abc")
+    )
+
+    assert fill.order_id == "irl-abc"

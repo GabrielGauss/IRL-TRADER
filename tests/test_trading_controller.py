@@ -268,3 +268,107 @@ def test_run_forever_stops_when_stop_event_is_set(repository):
 
     asyncio.run(scenario())  # must return, not hang
     broker.place_order.assert_not_awaited()
+
+
+def _collect_audit_records():
+    import logging as logging_module
+
+    from trading_bot.runtime.logging_config import AUDIT_LOGGER_NAME
+
+    records: list[logging_module.LogRecord] = []
+
+    class _CollectingHandler(logging_module.Handler):
+        def emit(self, record: logging_module.LogRecord) -> None:
+            records.append(record)
+
+    audit_logger = logging_module.getLogger(AUDIT_LOGGER_NAME)
+    handler = _CollectingHandler()
+    original_level = audit_logger.level
+    audit_logger.setLevel(logging_module.INFO)
+    audit_logger.addHandler(handler)
+
+    def restore():
+        audit_logger.removeHandler(handler)
+        audit_logger.setLevel(original_level)
+
+    return records, restore
+
+
+def _buy_fill() -> Fill:
+    return Fill(
+        order_id="irl-1",
+        symbol="BTC/USDT",
+        side=OrderSide.BUY,
+        quantity=1.0,
+        price=100.0,
+        fee=0.0,
+        fee_asset="USDT",
+        status="FILLED",
+    )
+
+
+def test_process_next_signal_routes_orders_through_the_gate_and_audits_receipt(repository):
+    from trading_bot.execution.router import OrderPlan
+    from trading_bot.irl.gate import ExecutionResult, IrlReceipt
+
+    broker = _broker({"BTC": 0.0, "USDT": 1000.0}, price=100.0)
+    gate = AsyncMock()
+    receipt = IrlReceipt(
+        trace_id="t-1",
+        reasoning_hash="r" * 64,
+        shadow_blocked=False,
+        final_proof="p" * 64,
+        verification_status="Matched",
+        bind_error=None,
+    )
+    gate.execute.return_value = ExecutionResult(fill=_buy_fill(), receipt=receipt)
+    controller = _controller(broker, repository, gate=gate)
+    records, restore = _collect_audit_records()
+
+    async def scenario():
+        await controller.queue.put(_signal("BUY"))
+        return await controller.process_next_signal(timeout=1.0)
+
+    try:
+        fill = asyncio.run(scenario())
+    finally:
+        restore()
+
+    plan = gate.execute.await_args.args[1]
+    assert isinstance(plan, OrderPlan) and plan.side is OrderSide.BUY
+    assert gate.execute.await_args.kwargs["price"] == 100.0
+    broker.place_order.assert_not_awaited()  # only the gate places orders
+    assert fill is not None and fill.order_id == "irl-1"
+    assert len(repository.get_trades()) == 1
+    fill_record = records[-1]
+    assert fill_record.irl_trace_id == "t-1"  # type: ignore[attr-defined]
+    assert fill_record.irl_final_proof == "p" * 64  # type: ignore[attr-defined]
+    assert fill_record.irl_verification_status == "Matched"  # type: ignore[attr-defined]
+    assert fill_record.signal_source == "test"  # type: ignore[attr-defined]
+
+
+def test_process_next_signal_skips_trade_and_keeps_running_when_gate_blocks(repository):
+    from trading_bot.irl.gate import OrderBlocked
+
+    broker = _broker({"BTC": 0.0, "USDT": 1000.0}, price=100.0)
+    gate = AsyncMock()
+    gate.execute.side_effect = OrderBlocked("IRL denied: NOTIONAL_CAP", policy_denied=True)
+    controller = _controller(broker, repository, gate=gate)
+    records, restore = _collect_audit_records()
+
+    async def scenario():
+        await controller.queue.put(_signal("BUY"))
+        return await controller.process_next_signal(timeout=1.0)
+
+    try:
+        fill = asyncio.run(scenario())
+    finally:
+        restore()
+
+    assert fill is None
+    assert repository.get_trades() == []
+    status = controller.health.status()
+    assert status.signals_processed == 1
+    assert "NOTIONAL_CAP" in status.last_error
+    assert records[-1].getMessage() == "order blocked"
+    assert records[-1].policy_denied is True  # type: ignore[attr-defined]

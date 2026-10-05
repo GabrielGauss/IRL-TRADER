@@ -93,7 +93,7 @@ isort src tests
 mypy src/trading_bot
 ```
 
-231 tests, 95% coverage as of the last commit. `serve`'s async server
+285 tests, 96% coverage as of the last commit. `serve`'s async server
 lifecycle (signal handlers, task orchestration) is intentionally left out of
 the automated suite and verified with a real running instance instead -- see
 the commit history for the smoke-test transcript.
@@ -113,5 +113,7 @@ the commit history for the smoke-test transcript.
       metrics, health checks, CLI (`serve`, `status`)
 - [x] CI (GitHub Actions: ruff, black, isort, mypy, and pytest with a 90%
       coverage floor on Ubuntu + Windows, Python 3.12/3.13)
+- [x] IRL Engine gate (`serve --irl`): every order authorized, placed with
+      the sealed client id, and bound back to its IRL trace; fails closed
 - [ ] Live trading via `serve` for exchanges other than Binance (needs a
       credential story beyond the Binance-shaped `Settings` fields)
