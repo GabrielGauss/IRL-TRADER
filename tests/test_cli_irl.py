@@ -178,3 +178,85 @@ def test_serve_with_irl_requires_api_key_when_heartbeat_url_set(tmp_path, monkey
 
     with pytest.raises(ValueError, match="MACROPULSE_API_KEY"):
         cli._build_serve_runtime(_parse("serve", "--irl", "--db-path", str(tmp_path / "t.db")))
+
+
+def _canary_client(monkeypatch, *, authorize_error=None):
+    from trading_bot.irl.client import AuthorizeResult, BindResult
+
+    client = AsyncMock(spec=IrlClient)
+    if authorize_error is not None:
+        client.authorize.side_effect = authorize_error
+    else:
+        client.authorize.return_value = AuthorizeResult(
+            trace_id="t-1", reasoning_hash="r", authorized=True, shadow_blocked=False
+        )
+    client.bind.return_value = BindResult(
+        trace_id="t-1", final_proof="p", verification_status="Matched", divergence_reason=None
+    )
+    monkeypatch.setattr(cli, "IrlClient", lambda *a, **k: client)
+    return client
+
+
+def test_irl_canary_authorizes_then_binds_rejected_without_trading(monkeypatch, capsys):
+    _irl_settings(monkeypatch)
+    client = _canary_client(monkeypatch)
+
+    exit_code = cli.cmd_irl_canary(_parse("irl-canary"))
+
+    auth = client.authorize.await_args.kwargs
+    bind = client.bind.await_args
+    assert exit_code == 0
+    assert auth["client_order_id"].startswith("canary-")
+    assert auth["notional"] <= 1.0
+    assert bind.args[0] == "t-1"
+    assert bind.kwargs["execution_status"] == "Rejected"
+    assert bind.kwargs["exchange_tx_id"] == auth["client_order_id"]
+    assert "Matched" in capsys.readouterr().out
+    client.close.assert_awaited()
+
+
+def test_irl_canary_uses_the_same_identity_as_serve(monkeypatch):
+    _irl_settings(monkeypatch)
+    client = _canary_client(monkeypatch)
+
+    cli.cmd_irl_canary(_parse("irl-canary"))
+
+    identity = client.authorize.await_args.args[0]
+    assert identity == cli._agent_identity(_parse("serve"), _AGENT_ID)
+
+
+def test_irl_canary_regime_policy_denial_still_counts_as_healthy(monkeypatch):
+    from trading_bot.irl.client import IrlDenied
+
+    _irl_settings(monkeypatch)
+    _canary_client(monkeypatch, authorize_error=IrlDenied(403, "REGIME_VIOLATION", "risk_off"))
+
+    assert cli.cmd_irl_canary(_parse("irl-canary")) == 0
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        IrlUnavailable(500, "DATABASE_ERROR", "Internal storage error"),
+        __import__("trading_bot.irl.client", fromlist=["IrlDenied"]).IrlDenied(
+            403, "MODEL_HASH_MISMATCH", "hash"
+        ),
+    ],
+    ids=["db-error", "model-hash"],
+)
+def test_irl_canary_fails_on_infrastructure_or_config_errors(monkeypatch, caplog, error):
+    _irl_settings(monkeypatch)
+    _canary_client(monkeypatch, authorize_error=error)
+
+    with caplog.at_level("ERROR"):
+        exit_code = cli.cmd_irl_canary(_parse("irl-canary"))
+
+    assert exit_code == 1
+    assert error.code in caplog.text
+
+
+def test_irl_canary_requires_irl_settings(monkeypatch, caplog):
+    _irl_settings(monkeypatch, token="")
+
+    with caplog.at_level("ERROR"):
+        assert cli.cmd_irl_canary(_parse("irl-canary")) == 2
