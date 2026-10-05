@@ -29,7 +29,8 @@ config.Settings -> exchange.BinanceClient -> strategy.EmaRsiStrategy
 ```
 
 ```bash
-trading-bot backtest --symbol BTCUSDT --interval 1h --limit 500
+trading-bot backtest --symbol BTCUSDT --interval 1h --start 2025-01-01   # realistic costs + B&H benchmark
+trading-bot walkforward --start 2024-10-01 --end 2026-10-01             # out-of-sample evaluation
 trading-bot run --once      # single testnet iteration
 trading-bot run              # live poll loop (Ctrl+C to stop)
 ```
@@ -113,7 +114,7 @@ isort src tests
 mypy src/trading_bot
 ```
 
-301 tests, 96% coverage as of the last commit. `serve`'s async server
+320 tests, 96% coverage as of the last commit. `serve`'s async server
 lifecycle (signal handlers, task orchestration) is intentionally left out of
 the automated suite and verified with a real running instance instead -- see
 the commit history for the smoke-test transcript.
@@ -138,8 +139,12 @@ the commit history for the smoke-test transcript.
 - [x] Docker deployment behind a shared nginx, webhook auth, persistent
       kill-switch latch, paper account persisted across restarts
 - [x] `irl-canary`: scheduled end-to-end IRL check (via the VPS monitoring)
-- [ ] Honest backtester: fees, slippage, out-of-sample / walk-forward,
-      buy-and-hold benchmark
+- [x] Honest backtester: next-bar-open fills, fees + slippage, buy-and-hold
+      benchmark at the same costs and size, paginated cached history, and
+      `trading-bot walkforward` (params chosen on train, scored only on unseen
+      test windows). First result for EMA/RSI on 2 years of BTCUSDT 1h:
+      in-sample Sharpe 2.34 -> out-of-sample 0.55, only 8 OOS trades
+      (7.9% exposure): **inconclusive, no demonstrated edge**.
 - [ ] Internal strategy as a signal source + signal combiner (with
       per-source webhook credentials)
 - [ ] Weeks of paper trading on the VPS -> Binance testnet -> small live

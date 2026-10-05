@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from trading_bot import cli
+from trading_bot import cli, cli_backtest
 from trading_bot.config import Settings
 from trading_bot.execution.engine import RiskLimitBreached
 
@@ -65,7 +65,7 @@ def test_cmd_backtest_prints_summary_and_returns_zero(monkeypatch, capsys):
     # Arrange
     fake_client = MagicMock()
     fake_client.get_klines.return_value = _klines_df([100.0] * 40)
-    monkeypatch.setattr(cli, "BinanceClient", lambda settings: fake_client)
+    monkeypatch.setattr(cli_backtest, "BinanceClient", lambda settings: fake_client)
 
     parser = cli.build_parser()
     args = parser.parse_args(["backtest", "--symbol", "BTCUSDT", "--limit", "40"])
@@ -172,3 +172,79 @@ def test_main_returns_130_on_keyboard_interrupt(monkeypatch):
     monkeypatch.setattr(cli, "build_parser", lambda: fake_parser)
 
     assert cli.main([]) == 130
+
+
+def _history(n: int = 900):
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(5)
+    closes = 100 * np.exp(np.cumsum(rng.normal(0.0003, 0.01, n)))
+    opens = np.concatenate([[100.0], closes[:-1]])
+    return pd.DataFrame(
+        {
+            "open_time": pd.date_range("2024-01-01", periods=n, freq="1h"),
+            "open": opens,
+            "high": np.maximum(opens, closes),
+            "low": np.minimum(opens, closes),
+            "close": closes,
+            "volume": 1.0,
+        }
+    )
+
+
+def test_backtest_defaults_to_realistic_costs_and_fills(monkeypatch, capsys):
+    captured = {}
+
+    def fake_run_backtest(strategy, df, **kwargs):
+        captured.update(kwargs)
+        from trading_bot.backtest.engine import BacktestResult
+
+        return BacktestResult(initial_balance=1000.0, equity_curve=(1000.0, 1001.0), trades=())
+
+    monkeypatch.setattr(cli_backtest, "load_public_data_settings", lambda use_testnet: object())
+    monkeypatch.setattr(cli_backtest, "BinanceClient", lambda settings: object())
+    monkeypatch.setattr(cli_backtest, "load_history", lambda *a, **k: _history(200))
+    monkeypatch.setattr(cli_backtest, "run_backtest", fake_run_backtest)
+
+    exit_code = cli.main(["backtest", "--start", "2024-01-01"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert captured["fill"] == "next_open"
+    assert captured["fee_bps"] == 10.0
+    assert captured["slippage_bps"] == 5.0
+    assert "Buy & hold" in out
+    assert "Sharpe" in out
+
+
+def test_walkforward_command_prints_fold_table_and_verdict(monkeypatch, capsys):
+    monkeypatch.setattr(cli_backtest, "load_public_data_settings", lambda use_testnet: object())
+    monkeypatch.setattr(cli_backtest, "BinanceClient", lambda settings: object())
+    monkeypatch.setattr(cli_backtest, "load_history", lambda *a, **k: _history(900))
+
+    exit_code = cli.main(
+        [
+            "walkforward",
+            "--start",
+            "2024-01-01",
+            "--train-bars",
+            "400",
+            "--test-bars",
+            "250",
+            "--fast-ema-grid",
+            "5,8",
+            "--slow-ema-grid",
+            "20",
+            "--rsi-oversold-grid",
+            "35",
+            "--rsi-overbought-grid",
+            "65",
+        ]
+    )
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "fold" in out.lower()
+    assert "Out-of-sample" in out
+    assert "Buy & hold" in out

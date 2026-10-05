@@ -20,11 +20,10 @@ from pathlib import Path
 
 from aiohttp import web
 
-from trading_bot.backtest.engine import run_backtest
+from trading_bot.cli_backtest import add_backtest_commands, cmd_backtest  # noqa: F401
 from trading_bot.config import (
     IrlSettings,
     load_irl_settings,
-    load_public_data_settings,
     load_settings,
     load_webhook_settings,
 )
@@ -67,39 +66,6 @@ def _build_strategy(args: argparse.Namespace) -> EmaRsiStrategy:
         rsi_oversold=args.rsi_oversold,
         rsi_overbought=args.rsi_overbought,
     )
-
-
-def cmd_backtest(args: argparse.Namespace) -> int:
-    settings = load_public_data_settings(use_testnet=args.testnet)
-    client = BinanceClient(settings)
-    strategy = _build_strategy(args)
-
-    logger.info(
-        "Fetching %s %s klines (limit=%s, testnet=%s)",
-        args.symbol,
-        args.interval,
-        args.limit,
-        args.testnet,
-    )
-    df = client.get_klines(args.symbol, args.interval, limit=args.limit)
-
-    result = run_backtest(
-        strategy,
-        df,
-        initial_balance=args.initial_balance,
-        position_size_fraction=args.position_size_fraction,
-    )
-
-    print(f"Symbol:           {args.symbol}")
-    print(f"Interval:         {args.interval}")
-    print(f"Bars:             {len(df)}")
-    print(f"Initial balance:  {result.initial_balance:.2f}")
-    print(f"Final equity:     {result.final_equity:.2f}")
-    print(f"Total return:     {result.total_return_pct:+.2f}%")
-    print(f"Trades:           {result.num_trades}")
-    print(f"Win rate:         {result.win_rate_pct:.2f}%")
-    print(f"Max drawdown:     {result.max_drawdown_pct:.2f}%")
-    return 0
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -613,21 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="trading-bot")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    backtest_parser = subparsers.add_parser(
-        "backtest", help="Backtest the EMA/RSI strategy over historical klines"
-    )
-    backtest_parser.add_argument("--symbol", default="BTCUSDT")
-    backtest_parser.add_argument("--interval", default="1h")
-    backtest_parser.add_argument("--limit", type=int, default=500)
-    backtest_parser.add_argument("--initial-balance", type=float, default=1000.0)
-    backtest_parser.add_argument("--position-size-fraction", type=float, default=0.1)
-    backtest_parser.add_argument(
-        "--testnet",
-        action="store_true",
-        help="Fetch klines from Binance testnet instead of mainnet public data (default: mainnet)",
-    )
-    _add_strategy_arguments(backtest_parser)
-    backtest_parser.set_defaults(func=cmd_backtest)
+    add_backtest_commands(subparsers, _add_strategy_arguments)
 
     run_parser = subparsers.add_parser("run", help="Run the live/testnet trading loop")
     run_parser.add_argument("--base-asset", default="BTC")
