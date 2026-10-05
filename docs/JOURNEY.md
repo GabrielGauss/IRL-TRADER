@@ -1,4 +1,4 @@
-# The journey: from an empty skeleton to an IRL-gated bot with a canary
+# The journey: from an empty skeleton to the reference agent for IRL
 
 This is the story of how the project got to where it is: what was built,
 which decisions shaped it, what broke along the way, and why the last piece
@@ -112,9 +112,53 @@ container that actually restarts after a reboot.
 4. **Deploys follow tests, not pushes.**
 5. **Correct before clever.** The bot still has no proven trading edge. That's the next phase, deliberately last.
 
+## 7. Looking for an edge, and finding a product (5 Oct 2026)
+
+With the honest backtester built, the question was simple: does any strategy
+deserve real money?
+
+- **No timing edge.** EMA/RSI, Donchian breakouts, time-series momentum and
+  RSI(2) mean reversion were walk-forward tested on BTC and ETH, 1h and 4h,
+  2022–2026. In-sample Sharpe of 1–2 collapsed to between −1.5 and 0.4 out of
+  sample, and none beat buy and hold
+  ([research](research/2026-10-05-phase3-walkforward.md)).
+- **What passed was boring.** A volatility-targeted trend core on daily BTC beat
+  buy and hold on a pre-registered, risk-adjusted test (Sharpe 1.03 vs 0.85,
+  max drawdown 42% vs 76%) and failed on ETH
+  ([research](research/2026-10-05-vol-target-core.md)). It is a calmer way to
+  hold BTC, not alpha.
+- **HFT was ruled out** on arithmetic: retail fees (~20 bps a round trip) and
+  ~200 ms of latency guarantee losses, and IRL's authorize → bind round trips
+  are the opposite of high frequency.
+
+That reframed the project. Brokers now let AI agents trade on a user's behalf
+and say plainly that they don't supervise them. The valuable thing was never
+the strategy: it was the guardrail. So:
+
+- **IRL stands on its own.** It runs with no external signal (`MTA_MODE=none`),
+  enforces asset and venue mandates, and is free to use: the engine is public
+  at [macropulse-lab/irl](https://github.com/macropulse-lab/irl) under
+  FSL-1.1-ALv2, with the gateway, SDKs and verifier under MIT. It has one site,
+  [irl.macropulse.live](https://irl.macropulse.live), and whitepaper v5.0.
+- **The IRL Gateway** ([macropulse-lab/irl-gateway](https://github.com/macropulse-lab/irl-gateway))
+  gives any MCP agent a trading account it can't misuse: `execute_trade` with a
+  sealed rationale, fail closed, kill switch, paper by default. It is on PyPI
+  (`pip install irl-gateway`) and in the official MCP Registry.
+- **This bot became the reference agent.** `trading-bot agent` runs the
+  volatility-target core once a day and trades through the gateway over MCP,
+  exactly as a third-party agent would. Its first production trade bought
+  ~$940 of paper BTC, sealed with its rationale and bound MATCHED. When the
+  regime turned risk-off, IRL refused its buys, and the refusal is on the
+  record too. vps-ops watches its daily cycle, its trades and its kill switch.
+
 ## What's next
 
-1. An **honest backtester**: fees, slippage, out-of-sample / walk-forward testing, and a buy-and-hold benchmark. Without it, no strategy result means anything.
-2. An internal strategy as one signal source, a **signal combiner**, and **per-source webhook credentials** before a second sender is added.
-3. **IRL Layer 2 v2:** move regime binding server-side, so remote clients no longer need a second credential or a 200 ms cross-service window.
-4. Weeks of **paper trading** on the server → **Binance testnet** → **small live** (< $500, spot only, tight kill switch).
+1. **Feedback before features:** launch posts and ~10 interviews with people who
+   run agents near money (drafts kept privately with the IRL docs).
+2. An **LLM reviewer** that can veto or shrink the core's trades, its reasoning
+   sealed the same way.
+3. External signals (TradingView) as a second source, with **per-source webhook
+   credentials**.
+4. Weeks of **paper trading** → **Binance testnet** → **small live** (< $500,
+   spot only, tight kill switch), only for a strategy that keeps passing
+   out-of-sample tests.
