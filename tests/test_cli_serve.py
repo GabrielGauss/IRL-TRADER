@@ -261,3 +261,19 @@ def test_build_serve_runtime_wires_secret_into_webhook(tmp_path, monkeypatch):
             return denied.status, allowed.status
 
     assert asyncio.run(scenario()) == (401, 202)
+
+
+def test_cmd_serve_returns_two_with_clean_error_on_config_problem(tmp_path, monkeypatch, caplog):
+    _no_webhook_secret(monkeypatch)
+    monkeypatch.setattr(cli, "configure_logging", lambda **kwargs: None)
+    audit_log = tmp_path / "audit.log"
+    args = cli.build_parser().parse_args(
+        ["serve", "--db-path", str(tmp_path / "t.db"), "--audit-log", str(audit_log)]
+    )
+
+    with caplog.at_level("ERROR"):
+        exit_code = cli.cmd_serve(args)
+
+    assert exit_code == 2
+    assert "SIGNAL_WEBHOOK_SECRET" in caplog.text
+    assert not audit_log.exists()

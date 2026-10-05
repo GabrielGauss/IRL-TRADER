@@ -282,8 +282,14 @@ async def _run_serve_runtime(runtime: ServeRuntime, args: argparse.Namespace) ->
 
 def cmd_serve(args: argparse.Namespace) -> int:
     configure_logging(json_output=not args.plain_logs)
+    try:
+        runtime = _build_serve_runtime(args)
+    except ValueError as exc:  # includes pydantic ValidationError from settings
+        logger.error("serve configuration error: %s", exc)
+        return 2
+    # Only create the audit log once config is known-good, so a refused start
+    # doesn't leave an empty log file behind.
     get_audit_logger(args.audit_log)
-    runtime = _build_serve_runtime(args)
     return asyncio.run(_run_serve_runtime(runtime, args))
 
 
