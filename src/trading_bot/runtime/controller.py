@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from trading_bot.execution.broker import Broker, Fill
@@ -59,6 +60,8 @@ class TradingController:
         position_size_fraction: float,
         initial_cash: float = 0.0,
         gate: OrderGate | None = None,
+        initial_portfolio: PortfolioState | None = None,
+        after_fill: Callable[[], None] | None = None,
     ):
         self._broker = broker
         self.queue = queue
@@ -70,7 +73,9 @@ class TradingController:
         self._base_asset = base_asset
         self._quote_asset = quote_asset
         self._position_size_fraction = position_size_fraction
-        self._portfolio = PortfolioState(cash=initial_cash)
+        self._portfolio = initial_portfolio or PortfolioState(cash=initial_cash)
+        # Runs after every fill is applied (e.g. to persist paper state).
+        self._after_fill: Callable[[], None] = after_fill or (lambda: None)
         self._last_drawdown_status: DrawdownStatus | None = None
         self._gate: OrderGate = gate or PassthroughGate()
 
@@ -127,6 +132,7 @@ class TradingController:
                 else:
                     fill = result.fill
                     self._record_fill(result, signal.source)
+                    self._after_fill()
             self._repository.record_equity(equity)
             self.health.record_signal_processed()
             return fill
