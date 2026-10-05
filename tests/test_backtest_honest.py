@@ -216,6 +216,9 @@ def test_walk_forward_report_aggregates_trades_and_exposure():
     assert report.mean_oos_exposure_pct == pytest.approx(
         sum(f.oos.exposure_pct for f in report.folds) / len(report.folds)
     )
+    assert report.mean_benchmark_sharpe == pytest.approx(
+        sum(f.benchmark.sharpe for f in report.folds) / len(report.folds)
+    )
 
 
 def test_verdict_refuses_to_call_a_winner_on_too_few_trades():

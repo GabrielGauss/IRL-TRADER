@@ -8,6 +8,7 @@ benchmark paying the same costs and position size.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 from collections.abc import Callable
 
@@ -15,8 +16,9 @@ import pandas as pd
 
 from trading_bot.backtest.data import load_history
 from trading_bot.backtest.engine import run_backtest
+from trading_bot.backtest.grids import GRIDS, ParamGrid, StrategyGrid
 from trading_bot.backtest.metrics import Summary, buy_and_hold, summarize
-from trading_bot.backtest.walkforward import ParamGrid, verdict, walk_forward
+from trading_bot.backtest.walkforward import verdict, walk_forward
 from trading_bot.config import load_public_data_settings
 from trading_bot.exchange.binance_client import BinanceClient
 from trading_bot.strategy.ema_rsi import EmaRsiStrategy
@@ -50,9 +52,17 @@ def add_backtest_commands(
 
     wf = subparsers.add_parser(
         "walkforward",
-        help="Choose EMA/RSI params on a training window, score them on the next unseen window",
+        help="Choose strategy params on a training window, score them on the next unseen window",
     )
     _add_data_args(wf)
+    wf.add_argument("--strategy", choices=sorted(GRIDS), default="ema_rsi")
+    wf.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        metavar="NAME=V1,V2",
+        help="override one grid axis of the chosen strategy, e.g. --param entry_period=20,55",
+    )
     wf.add_argument("--train-bars", type=int, default=2000)
     wf.add_argument("--test-bars", type=int, default=500)
     wf.add_argument("--position-size-fraction", type=float, default=1.0)
@@ -61,8 +71,7 @@ def add_backtest_commands(
     for name in ("fast_ema", "slow_ema", "rsi_period", "rsi_oversold", "rsi_overbought"):
         wf.add_argument(
             f"--{name.replace('_', '-')}-grid",
-            default=",".join(str(v) for v in getattr(defaults, name)),
-            help=f"comma-separated values (default {getattr(defaults, name)})",
+            help=f"ema_rsi only: comma-separated values (default {getattr(defaults, name)})",
         )
     wf.set_defaults(func=cmd_walkforward)
 
@@ -143,14 +152,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
 
 def cmd_walkforward(args: argparse.Namespace) -> int:
+    grid = build_grid(args.strategy, _grid_overrides(args))
     df = _load(args)
-    grid = ParamGrid(
-        fast_ema=_ints(args.fast_ema_grid),
-        slow_ema=_ints(args.slow_ema_grid),
-        rsi_period=_ints(args.rsi_period_grid),
-        rsi_oversold=_floats(args.rsi_oversold_grid),
-        rsi_overbought=_floats(args.rsi_overbought_grid),
-    )
     report = walk_forward(
         df,
         grid,
@@ -162,24 +165,24 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
         position_size_fraction=args.position_size_fraction,
     )
     print(
-        f"{args.symbol} {args.interval}: {len(df)} bars, {len(report.folds)} folds "
+        f"{args.symbol} {args.interval} {args.strategy}: {len(df)} bars, {len(report.folds)} folds "
         f"(train {args.train_bars} / test {args.test_bars}), {len(grid.combinations())} param sets, "
         f"fee {args.fee_bps} bps, slippage {args.slippage_bps} bps"
     )
     print(
-        f"{'fold':>4}  {'test window':<33} {'params':<22} {'IS Sharpe':>9} {'OOS ret%':>9} {'OOS Sharpe':>10} {'B&H ret%':>9}"
+        f"{'fold':>4}  {'test window':<33} {'params':<28} {'IS Sharpe':>9} {'OOS ret%':>9} {'OOS Sharpe':>10} {'B&H ret%':>9}"
     )
     for i, fold in enumerate(report.folds, start=1):
-        p = fold.params
         window = f"{df['open_time'].iloc[fold.test_start]:%Y-%m-%d} -> {df['open_time'].iloc[fold.test_end - 1]:%Y-%m-%d}"
-        params = f"{int(p['fast_ema'])}/{int(p['slow_ema'])} rsi {p['rsi_oversold']:g}-{p['rsi_overbought']:g}"
+        params = grid.describe(fold.params)
         print(
-            f"{i:>4}  {window:<33} {params:<22} {fold.in_sample.sharpe:>9.2f} "
+            f"{i:>4}  {window:<33} {params:<28} {fold.in_sample.sharpe:>9.2f} "
             f"{fold.oos.total_return_pct:>9.2f} {fold.oos.sharpe:>10.2f} {fold.benchmark.total_return_pct:>9.2f}"
         )
     print()
     print(f"In-sample Sharpe (mean):      {report.mean_in_sample_sharpe:.2f}")
     print(f"Out-of-sample Sharpe (mean):  {report.mean_oos_sharpe:.2f}")
+    print(f"Buy & hold Sharpe (mean):     {report.mean_benchmark_sharpe:.2f}")
     print(f"Out-of-sample return:         {report.oos_return_pct:+.2f}%")
     print(f"Buy & hold return (same windows): {report.benchmark_return_pct:+.2f}%")
     print(f"Out-of-sample trades:         {report.oos_trades}")
@@ -204,9 +207,36 @@ def _print_summary_table(rows: list[tuple[str, Summary]]) -> None:
         )
 
 
-def _ints(text: str) -> tuple[int, ...]:
-    return tuple(int(float(v)) for v in text.split(",") if v.strip())
+EMA_GRID_FLAGS = ("fast_ema", "slow_ema", "rsi_period", "rsi_oversold", "rsi_overbought")
 
 
-def _floats(text: str) -> tuple[float, ...]:
-    return tuple(float(v) for v in text.split(",") if v.strip())
+def _grid_overrides(args: argparse.Namespace) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    for name in EMA_GRID_FLAGS:
+        value = getattr(args, f"{name}_grid")
+        if value is not None:
+            if args.strategy != "ema_rsi":
+                raise SystemExit(f"--{name.replace('_', '-')}-grid only applies to ema_rsi")
+            overrides[name] = value
+    for item in args.param:
+        name, sep, values = item.partition("=")
+        if not sep or not values.strip():
+            raise SystemExit(f"--param expects NAME=V1,V2, got {item!r}")
+        overrides[name.strip()] = values
+    return overrides
+
+
+def build_grid(strategy: str, overrides: dict[str, str]) -> StrategyGrid:
+    """Default grid for `strategy` with some axes replaced by comma-separated values."""
+    grid = GRIDS[strategy]()
+    axes = {f.name: getattr(grid, f.name) for f in dataclasses.fields(grid)}
+    replaced = {}
+    for name, text in overrides.items():
+        if name not in axes:
+            raise SystemExit(f"{strategy} has no parameter {name!r}; choose from {sorted(axes)}")
+        cast = type(axes[name][0])
+        replaced[name] = tuple(cast(float(v)) for v in text.split(",") if v.strip())
+    grid = dataclasses.replace(grid, **replaced)
+    if not grid.combinations():
+        raise SystemExit(f"the {strategy} grid has no valid parameter combinations")
+    return grid

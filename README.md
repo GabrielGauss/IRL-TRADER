@@ -31,6 +31,7 @@ config.Settings -> exchange.BinanceClient -> strategy.EmaRsiStrategy
 ```bash
 trading-bot backtest --symbol BTCUSDT --interval 1h --start 2025-01-01   # realistic costs + B&H benchmark
 trading-bot walkforward --start 2024-10-01 --end 2026-10-01             # out-of-sample evaluation
+trading-bot walkforward --strategy momentum --param lookback=100,200 ... # ema_rsi|donchian|momentum|mean_reversion
 trading-bot run --once      # single testnet iteration
 trading-bot run              # live poll loop (Ctrl+C to stop)
 ```
@@ -145,6 +146,11 @@ the commit history for the smoke-test transcript.
       test windows). First result for EMA/RSI on 2 years of BTCUSDT 1h:
       in-sample Sharpe 2.34 -> out-of-sample 0.55, only 8 OOS trades
       (7.9% exposure): **inconclusive, no demonstrated edge**.
+- [x] Phase 3 research: Donchian breakout, time-series momentum and RSI(2)
+      mean reversion added next to EMA/RSI, walk-forward on BTC and ETH, 1h
+      and 4h, 2022-2026. **No candidate beats buy and hold on return or
+      Sharpe out of sample**; see
+      [docs/research/2026-10-05-phase3-walkforward.md](docs/research/2026-10-05-phase3-walkforward.md).
 - [ ] Internal strategy as a signal source + signal combiner (with
       per-source webhook credentials)
 - [ ] Weeks of paper trading on the VPS -> Binance testnet -> small live
