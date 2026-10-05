@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from aiohttp import web
 
 from trading_bot.backtest.engine import run_backtest
-from trading_bot.config import load_public_data_settings, load_settings
+from trading_bot.config import load_public_data_settings, load_settings, load_webhook_settings
 from trading_bot.exchange.binance_client import BinanceClient
 from trading_bot.execution.broker import Broker, CcxtBroker, PaperBroker
 from trading_bot.execution.engine import ExecutionEngine, RiskLimitBreached, RiskLimits
@@ -138,9 +138,29 @@ class ServeRuntime:
     price_broker: Broker | None
 
 
+def _resolve_signal_secret(args: argparse.Namespace) -> str | None:
+    """Fail closed: POST /signals must be authenticated unless the operator
+    explicitly opts out, and that opt-out is never allowed with real orders.
+    Binding to loopback isn't treated as safe, since tunnels (ngrok etc.)
+    commonly expose a localhost port to the internet."""
+    if args.no_auth:
+        if not args.paper:
+            raise ValueError("--no-auth is not allowed with --live; set SIGNAL_WEBHOOK_SECRET.")
+        logger.warning("POST /signals is UNAUTHENTICATED (--no-auth); paper mode only.")
+        return None
+    secret = load_webhook_settings().signal_webhook_secret
+    if secret is None:
+        raise ValueError(
+            "Refusing to start: set SIGNAL_WEBHOOK_SECRET (in .env or the environment) "
+            "to authenticate POST /signals, or pass --no-auth for local paper testing."
+        )
+    return secret.get_secret_value()
+
+
 def _build_serve_runtime(args: argparse.Namespace) -> ServeRuntime:
     """Pure(ish) construction, no network binding -- kept separate from
     _run_serve_runtime so it's unit-testable without starting a real server."""
+    signal_secret = _resolve_signal_secret(args)
     repository = TradeRepository(args.db_path)
     kill_switch = KillSwitch(
         KillSwitchLimits(
@@ -211,7 +231,7 @@ def _build_serve_runtime(args: argparse.Namespace) -> ServeRuntime:
             num_trades=len(repository.get_trades()),
         )
 
-    app = create_app(raw_queue, health, metrics_provider)
+    app = create_app(raw_queue, health, metrics_provider, signal_secret=signal_secret)
     return ServeRuntime(
         controller=controller, ingestor=ingestor, app=app, broker=broker, price_broker=price_broker
     )
@@ -363,6 +383,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--db-path", default="trading_bot.db")
     serve_parser.add_argument("--audit-log", default="trade_audit.log")
     serve_parser.add_argument("--plain-logs", action="store_true")
+    serve_parser.add_argument(
+        "--no-auth",
+        action="store_true",
+        help="Accept unauthenticated POST /signals (paper mode only; for local testing)",
+    )
     serve_parser.set_defaults(func=cmd_serve)
 
     status_parser = subparsers.add_parser(

@@ -73,7 +73,8 @@ breached), `serve` stops placing new orders and reports `healthy: false` via
 python -m venv .venv
 .venv/Scripts/pip install -e ".[dev]"   # Windows
 # .venv/bin/pip install -e ".[dev]"     # macOS/Linux
-cp .env.example .env                     # fill in BINANCE_API_KEY/SECRET for `run` / `serve --live`
+cp .env.example .env                     # BINANCE_API_KEY/SECRET for `run` / `serve --live`,
+                                         # SIGNAL_WEBHOOK_SECRET for `serve`
 ```
 
 ## Testing
@@ -82,10 +83,11 @@ cp .env.example .env                     # fill in BINANCE_API_KEY/SECRET for `r
 pytest --cov=src --cov-report=term-missing
 ruff check src tests
 black src tests
+isort src tests
 mypy src/trading_bot
 ```
 
-204 tests, 95% coverage as of the last commit. `serve`'s async server
+222 tests, 95% coverage as of the last commit. `serve`'s async server
 lifecycle (signal handlers, task orchestration) is intentionally left out of
 the automated suite and verified with a real running instance instead -- see
 the commit history for the smoke-test transcript.

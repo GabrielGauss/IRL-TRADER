@@ -7,7 +7,7 @@ misconfigured variable can't accidentally route orders to mainnet.
 
 from __future__ import annotations
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +44,35 @@ class Settings(BaseSettings):
                 "like `backtest` do not require this."
             )
         return self
+
+
+MIN_WEBHOOK_SECRET_LENGTH = 16
+
+
+class WebhookSettings(BaseSettings):
+    """Shared secret guarding `serve`'s POST /signals.
+
+    Kept separate from Settings because Settings requires Binance credentials,
+    which paper-mode `serve` deliberately does not need.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    signal_webhook_secret: SecretStr | None = Field(default=None)
+
+    @field_validator("signal_webhook_secret")
+    @classmethod
+    def _validate_secret_strength(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and len(value.get_secret_value()) < MIN_WEBHOOK_SECRET_LENGTH:
+            raise ValueError(
+                f"SIGNAL_WEBHOOK_SECRET must be at least {MIN_WEBHOOK_SECRET_LENGTH} characters "
+                '(generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`).'
+            )
+        return value
+
+
+def load_webhook_settings() -> WebhookSettings:
+    return WebhookSettings()
 
 
 def load_settings() -> Settings:

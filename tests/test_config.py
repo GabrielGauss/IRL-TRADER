@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from trading_bot.config import Settings, load_public_data_settings
+from trading_bot.config import Settings, WebhookSettings, load_public_data_settings
 
 
 def test_settings_accepts_valid_testnet_configuration():
@@ -68,3 +68,31 @@ def test_load_public_data_settings_can_target_mainnet_for_realistic_backtests():
     # Assert
     assert settings.use_testnet is False
     assert settings.binance_api_key == ""
+
+
+def test_webhook_settings_default_to_no_secret(monkeypatch):
+    monkeypatch.delenv("SIGNAL_WEBHOOK_SECRET", raising=False)
+
+    settings = WebhookSettings(_env_file=None)
+
+    assert settings.signal_webhook_secret is None
+
+
+def test_webhook_settings_read_secret_from_environment(monkeypatch):
+    monkeypatch.setenv("SIGNAL_WEBHOOK_SECRET", "a" * 32)
+
+    settings = WebhookSettings(_env_file=None)
+
+    assert settings.signal_webhook_secret is not None
+    assert settings.signal_webhook_secret.get_secret_value() == "a" * 32
+
+
+def test_webhook_settings_reject_short_secret():
+    with pytest.raises(ValidationError, match="at least 16"):
+        WebhookSettings(_env_file=None, signal_webhook_secret="short")
+
+
+def test_webhook_settings_do_not_leak_secret_in_repr():
+    settings = WebhookSettings(_env_file=None, signal_webhook_secret="b" * 32)
+
+    assert "b" * 32 not in repr(settings)
