@@ -93,7 +93,7 @@ isort src tests
 mypy src/trading_bot
 ```
 
-270 tests, 96% coverage as of the last commit. `serve`'s async server
+285 tests, 96% coverage as of the last commit. `serve`'s async server
 lifecycle (signal handlers, task orchestration) is intentionally left out of
 the automated suite and verified with a real running instance instead -- see
 the commit history for the smoke-test transcript.

@@ -297,3 +297,40 @@ def test_health_accepts_status_only_response_seen_on_real_engine():
     fake = _FakeIrl({"/irl/health": (200, {"status": "ok"})})
 
     assert _run(fake, lambda client: client.health()) is True
+
+
+def test_authorize_includes_heartbeat_when_given():
+    heartbeat = {
+        "sequence_id": 7,
+        "timestamp_ms": 1,
+        "regime_id": 0,
+        "mta_ref": "e",
+        "signature": "f",
+    }
+    fake = _FakeIrl(
+        {
+            "/irl/authorize": (
+                200,
+                {"trace_id": _TRACE_ID, "reasoning_hash": "c", "authorized": True},
+            )
+        }
+    )
+
+    _run(fake, lambda client: _authorize(client, heartbeat=heartbeat))
+
+    assert fake.requests[0][2]["heartbeat"] == heartbeat
+
+
+def test_authorize_omits_heartbeat_by_default():
+    fake = _FakeIrl(
+        {
+            "/irl/authorize": (
+                200,
+                {"trace_id": _TRACE_ID, "reasoning_hash": "c", "authorized": True},
+            )
+        }
+    )
+
+    _run(fake, _authorize)
+
+    assert "heartbeat" not in fake.requests[0][2]

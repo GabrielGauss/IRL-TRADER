@@ -114,6 +114,12 @@ shows up under IRL's `/irl/pending` for reconciliation.
    is shown once.
 2. Add to `.env`: `IRL_BASE_URL=http://irl-engine:4000` (the shared Docker
    network) and `IRL_API_TOKEN=<token>`.
+   If IRL runs with `LAYER2_ENABLED=true` (its default), every authorize must
+   carry a signed heartbeat from MacroPulse, fetched just before the call
+   (IRL rejects heartbeats older than 200 ms). Also add
+   `IRL_HEARTBEAT_URL=http://api:8000/v1/irl/heartbeat` and
+   `MACROPULSE_API_KEY=<irl_sidecar-tier key>`; without them authorize fails
+   with `HEARTBEAT_MISSING` and every order is blocked.
 3. Register the agent with the **same** strategy/risk flags `serve` uses. The
    cap is per order, in quote currency, and IRL scales it by the current
    market regime:

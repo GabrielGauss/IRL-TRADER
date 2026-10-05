@@ -186,3 +186,52 @@ def test_irl_gate_returns_fill_even_when_bind_fails():
     assert result.fill is not None
     assert result.receipt.final_proof is None
     assert "db down" in result.receipt.bind_error
+
+
+def test_irl_gate_attaches_a_fresh_heartbeat_to_each_authorize():
+    client = _irl_client()
+    source = AsyncMock()
+    source.fetch.side_effect = [{"sequence_id": 1}, {"sequence_id": 2}]
+    gate = IrlGate(
+        client,
+        _IDENTITY,
+        venue_id="BINANCE-PAPER",
+        notional_currency="USDT",
+        heartbeat_source=source,
+    )
+    broker = _paper_broker()
+
+    asyncio.run(gate.execute(broker, _BUY, price=100.0))
+    asyncio.run(gate.execute(broker, _SELL, price=100.0))
+
+    sent = [call.kwargs["heartbeat"] for call in client.authorize.await_args_list]
+    assert sent == [{"sequence_id": 1}, {"sequence_id": 2}]
+
+
+def test_irl_gate_blocks_order_when_heartbeat_unavailable():
+    broker = AsyncMock(wraps=_paper_broker())
+    client = _irl_client()
+    source = AsyncMock()
+    source.fetch.side_effect = IrlUnavailable(401, "HEARTBEAT_FETCH", "missing key")
+    gate = IrlGate(
+        client,
+        _IDENTITY,
+        venue_id="BINANCE-PAPER",
+        notional_currency="USDT",
+        heartbeat_source=source,
+    )
+
+    with pytest.raises(OrderBlocked) as exc_info:
+        asyncio.run(gate.execute(broker, _BUY, price=100.0))
+
+    assert exc_info.value.policy_denied is False
+    client.authorize.assert_not_awaited()
+    broker.place_order.assert_not_awaited()
+
+
+def test_irl_gate_without_heartbeat_source_sends_none():
+    client = _irl_client()
+
+    asyncio.run(_gate(client).execute(_paper_broker(), _BUY, price=100.0))
+
+    assert client.authorize.await_args.kwargs["heartbeat"] is None

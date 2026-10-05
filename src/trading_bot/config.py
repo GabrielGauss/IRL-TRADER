@@ -83,6 +83,9 @@ class IrlSettings(BaseSettings):
     irl_base_url: str = Field(default="")
     irl_api_token: SecretStr | None = Field(default=None)
     irl_agent_id: str = Field(default="")
+    # Layer-2 signed heartbeats (required when IRL runs LAYER2_ENABLED=true).
+    irl_heartbeat_url: str = Field(default="")
+    macropulse_api_key: SecretStr | None = Field(default=None)
 
 
 def load_irl_settings() -> IrlSettings:

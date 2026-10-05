@@ -31,6 +31,7 @@ from trading_bot.execution.broker import Broker, CcxtBroker, PaperBroker
 from trading_bot.execution.engine import ExecutionEngine, RiskLimitBreached, RiskLimits
 from trading_bot.irl.client import AgentIdentity, IrlClient, IrlError, model_hash
 from trading_bot.irl.gate import IrlGate, OrderGate, PassthroughGate
+from trading_bot.irl.heartbeat import MacroPulseHeartbeatSource
 from trading_bot.persistence.repository import TradeRepository
 from trading_bot.risk.drawdown import DrawdownMonitor, DrawdownStatus
 from trading_bot.risk.kill_switch import KillSwitch, KillSwitchLimits
@@ -148,6 +149,7 @@ class ServeRuntime:
     price_broker: Broker | None
     gate: OrderGate = field(default_factory=PassthroughGate)
     irl_client: IrlClient | None = None
+    heartbeat_source: MacroPulseHeartbeatSource | None = None
 
 
 IRL_MODEL_ID = "trading-bot/signal-executor"
@@ -204,19 +206,40 @@ def _irl_connection(settings: IrlSettings, *, need_agent: bool) -> tuple[str, st
     )
 
 
-def _build_irl_gate(args: argparse.Namespace) -> tuple[IrlGate, IrlClient]:
-    base_url, token, agent_id = _irl_connection(load_irl_settings(), need_agent=True)
+def _heartbeat_source(settings: IrlSettings) -> MacroPulseHeartbeatSource | None:
+    if not settings.irl_heartbeat_url:
+        return None
+    if settings.macropulse_api_key is None:
+        raise ValueError("IRL_HEARTBEAT_URL is set but MACROPULSE_API_KEY is not.")
+    return MacroPulseHeartbeatSource(
+        settings.irl_heartbeat_url, settings.macropulse_api_key.get_secret_value()
+    )
+
+
+def _build_irl_gate(
+    args: argparse.Namespace,
+) -> tuple[IrlGate, IrlClient, MacroPulseHeartbeatSource | None]:
+    settings = load_irl_settings()
+    base_url, token, agent_id = _irl_connection(settings, need_agent=True)
+    heartbeat_source = _heartbeat_source(settings)
     identity = _agent_identity(args, agent_id)
     client = IrlClient(base_url, token)
     venue_id = args.exchange_id.upper() + ("-PAPER" if args.paper else "")
     logger.info(
-        "IRL gate enabled: agent %s, model hash %s, venue %s",
+        "IRL gate enabled: agent %s, model hash %s, venue %s, L2 heartbeat %s",
         agent_id,
         identity.model_hash_hex,
         venue_id,
+        "on" if heartbeat_source else "off",
     )
-    gate = IrlGate(client, identity, venue_id=venue_id, notional_currency=args.quote_asset)
-    return gate, client
+    gate = IrlGate(
+        client,
+        identity,
+        venue_id=venue_id,
+        notional_currency=args.quote_asset,
+        heartbeat_source=heartbeat_source,
+    )
+    return gate, client, heartbeat_source
 
 
 def _resolve_signal_secret(args: argparse.Namespace) -> str | None:
@@ -280,8 +303,9 @@ def _build_serve_runtime(args: argparse.Namespace) -> ServeRuntime:
 
     gate: OrderGate = PassthroughGate()
     irl_client: IrlClient | None = None
+    heartbeat_source: MacroPulseHeartbeatSource | None = None
     if args.irl:
-        gate, irl_client = _build_irl_gate(args)
+        gate, irl_client, heartbeat_source = _build_irl_gate(args)
 
     controller = TradingController(
         broker=broker,
@@ -327,6 +351,7 @@ def _build_serve_runtime(args: argparse.Namespace) -> ServeRuntime:
         price_broker=price_broker,
         gate=gate,
         irl_client=irl_client,
+        heartbeat_source=heartbeat_source,
     )
 
 
@@ -371,6 +396,8 @@ async def _run_serve_runtime(runtime: ServeRuntime, args: argparse.Namespace) ->
             await runtime.price_broker.close()
         if runtime.irl_client is not None:
             await runtime.irl_client.close()
+        if runtime.heartbeat_source is not None:
+            await runtime.heartbeat_source.close()
 
     return 1 if runtime.controller.health.status().kill_switch_tripped else 0
 

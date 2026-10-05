@@ -138,3 +138,43 @@ def test_irl_register_requires_url_and_token(monkeypatch, caplog):
 
     assert exit_code == 2
     assert "IRL_API_TOKEN" in caplog.text
+
+
+def test_serve_with_irl_attaches_heartbeat_source_when_configured(tmp_path, monkeypatch):
+    from trading_bot.irl.heartbeat import MacroPulseHeartbeatSource
+
+    monkeypatch.setattr(
+        cli,
+        "load_irl_settings",
+        lambda: IrlSettings.model_construct(
+            irl_base_url="http://irl-engine:4000",
+            irl_api_token=SecretStr("tok"),
+            irl_agent_id=_AGENT_ID,
+            irl_heartbeat_url="http://api:8000/v1/irl/heartbeat",
+            macropulse_api_key=SecretStr("mp_key"),
+        ),
+    )
+
+    runtime = cli._build_serve_runtime(
+        _parse("serve", "--irl", "--db-path", str(tmp_path / "t.db"))
+    )
+
+    assert isinstance(runtime.gate._heartbeat_source, MacroPulseHeartbeatSource)
+    assert runtime.heartbeat_source is runtime.gate._heartbeat_source
+
+
+def test_serve_with_irl_requires_api_key_when_heartbeat_url_set(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "load_irl_settings",
+        lambda: IrlSettings.model_construct(
+            irl_base_url="http://irl-engine:4000",
+            irl_api_token=SecretStr("tok"),
+            irl_agent_id=_AGENT_ID,
+            irl_heartbeat_url="http://api:8000/v1/irl/heartbeat",
+            macropulse_api_key=None,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="MACROPULSE_API_KEY"):
+        cli._build_serve_runtime(_parse("serve", "--irl", "--db-path", str(tmp_path / "t.db")))

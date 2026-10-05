@@ -102,6 +102,7 @@ class IrlClient:
         notional_currency: str,
         venue_id: str,
         client_order_id: str,
+        heartbeat: Mapping[str, Any] | None = None,
     ) -> AuthorizeResult:
         # Spot only: a sell can only reduce a long, never open a short, so it
         # is flagged reduce_only (IRL then lets exits through risk-off regimes).
@@ -118,6 +119,8 @@ class IrlClient:
             "reduce_only": not is_buy,
             "agent_valid_time": int(time.time() * 1000),
         }
+        if heartbeat is not None:
+            payload["heartbeat"] = dict(heartbeat)
         data = await self._request("POST", "/irl/authorize", payload)
         return AuthorizeResult(
             trace_id=str(data["trace_id"]),

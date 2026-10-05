@@ -22,7 +22,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from trading_bot.execution.broker import Broker, Fill, OrderSide
 from trading_bot.execution.router import OrderPlan
@@ -60,6 +60,10 @@ class ExecutionResult:
     receipt: IrlReceipt | None
 
 
+class HeartbeatSource(Protocol):
+    async def fetch(self) -> dict[str, Any]: ...
+
+
 class OrderGate(Protocol):
     async def execute(
         self, broker: Broker, plan: OrderPlan, *, price: float
@@ -80,16 +84,21 @@ class IrlGate:
         *,
         venue_id: str,
         notional_currency: str,
+        heartbeat_source: HeartbeatSource | None = None,
     ):
         self._client = client
         self._identity = identity
         self._venue_id = venue_id
         self._notional_currency = notional_currency
+        self._heartbeat_source = heartbeat_source
 
     async def execute(self, broker: Broker, plan: OrderPlan, *, price: float) -> ExecutionResult:
         client_order_id = _CLIENT_ORDER_ID_PREFIX + uuid.uuid4().hex
         is_buy = plan.side is OrderSide.BUY
         try:
+            # Fetched right before authorize: IRL rejects heartbeats older
+            # than its drift window (200 ms by default).
+            heartbeat = await self._heartbeat_source.fetch() if self._heartbeat_source else None
             auth = await self._client.authorize(
                 self._identity,
                 is_buy=is_buy,
@@ -99,6 +108,7 @@ class IrlGate:
                 notional_currency=self._notional_currency,
                 venue_id=self._venue_id,
                 client_order_id=client_order_id,
+                heartbeat=heartbeat,
             )
         except IrlDenied as exc:
             raise OrderBlocked(f"IRL denied: {exc}", policy_denied=True) from exc
