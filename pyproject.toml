@@ -2,7 +2,7 @@
 name = "trading-bot"
 version = "0.1.0"
 description = "Binance spot trading bot: strategy signals, risk-sized execution, and backtesting."
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.6",
     "pydantic-settings>=2.2",

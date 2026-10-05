@@ -103,6 +103,7 @@ the commit history for the smoke-test transcript.
 - [x] Main event loop (`TradingController`), webhook signal ingestion,
       structured JSON logging + trade audit trail, Sharpe/PnL/drawdown
       metrics, health checks, CLI (`serve`, `status`)
-- [ ] CI (GitHub Actions running the test suite on push)
+- [x] CI (GitHub Actions: ruff, black, isort, mypy, and pytest with a 90%
+      coverage floor on Ubuntu + Windows, Python 3.12/3.13)
 - [ ] Live trading via `serve` for exchanges other than Binance (needs a
       credential story beyond the Binance-shaped `Settings` fields)
