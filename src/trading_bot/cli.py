@@ -11,6 +11,7 @@ import signal
 import sys
 import time
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version as package_version
@@ -32,6 +33,8 @@ from trading_bot.execution.engine import ExecutionEngine, RiskLimitBreached, Ris
 from trading_bot.irl.client import AgentIdentity, IrlClient, IrlError, model_hash
 from trading_bot.irl.gate import IrlGate, OrderGate, PassthroughGate
 from trading_bot.irl.heartbeat import MacroPulseHeartbeatSource
+from trading_bot.persistence.paper_state import STATE_FILENAME as PAPER_STATE_FILENAME
+from trading_bot.persistence.paper_state import load_paper_state, save_paper_state
 from trading_bot.persistence.repository import TradeRepository
 from trading_bot.risk.drawdown import DrawdownMonitor, DrawdownStatus
 from trading_bot.risk.kill_switch import KillSwitch, KillSwitchLimits
@@ -242,6 +245,21 @@ def _build_irl_gate(
     return gate, client, heartbeat_source
 
 
+def _paper_state_saver(
+    broker: PaperBroker | None,
+    controller: Callable[[], TradingController],
+    path: Path,
+) -> Callable[[], None] | None:
+    """Persist the paper account after each fill; None outside paper mode."""
+    if broker is None:
+        return None
+
+    def save() -> None:
+        save_paper_state(path, broker.balances, controller().portfolio)
+
+    return save
+
+
 def _resolve_signal_secret(args: argparse.Namespace) -> str | None:
     """Fail closed: POST /signals must be authenticated unless the operator
     explicitly opts out, and that opt-out is never allowed with real orders.
@@ -277,15 +295,26 @@ def _build_serve_runtime(args: argparse.Namespace) -> ServeRuntime:
     raw_queue: asyncio.Queue = asyncio.Queue()
 
     price_broker: Broker | None = None
+    paper_broker: PaperBroker | None = None
+    paper_state_path = Path(args.db_path).resolve().parent / PAPER_STATE_FILENAME
+    restored = load_paper_state(paper_state_path) if args.paper else None
     if args.paper:
         price_broker = CcxtBroker(args.exchange_id, testnet=False)
-        broker: Broker = PaperBroker(
+        initial_balances = (
+            restored.balances
+            if restored
+            else {args.quote_asset: args.paper_quote_balance, args.base_asset: 0.0}
+        )
+        paper_broker = PaperBroker(
             price_broker.get_price,
-            initial_balances={args.quote_asset: args.paper_quote_balance, args.base_asset: 0.0},
+            initial_balances=initial_balances,
             slippage_bps=args.paper_slippage_bps,
             fee_bps=args.paper_fee_bps,
         )
+        broker: Broker = paper_broker
         initial_cash = args.paper_quote_balance
+        if restored:
+            logger.info("Restored paper account from %s", paper_state_path)
     else:
         if args.exchange_id != "binance":
             raise ValueError(
@@ -320,6 +349,8 @@ def _build_serve_runtime(args: argparse.Namespace) -> ServeRuntime:
         position_size_fraction=args.position_size_fraction,
         initial_cash=initial_cash,
         gate=gate,
+        initial_portfolio=restored.portfolio if restored else None,
+        after_fill=_paper_state_saver(paper_broker, lambda: controller, paper_state_path),
     )
     ingestor = SignalIngestor(fetch=raw_queue.get, queue=signal_queue)
 

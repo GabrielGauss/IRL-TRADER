@@ -372,3 +372,35 @@ def test_process_next_signal_skips_trade_and_keeps_running_when_gate_blocks(repo
     assert "NOTIONAL_CAP" in status.last_error
     assert records[-1].getMessage() == "order blocked"
     assert records[-1].policy_denied is True  # type: ignore[attr-defined]
+
+
+def test_controller_starts_from_restored_portfolio(repository):
+    from trading_bot.risk.portfolio import PortfolioState
+
+    restored = PortfolioState(cash=123.0, realized_pnl=4.5)
+    controller = _controller(_broker({}), repository, initial_portfolio=restored)
+
+    assert controller.portfolio == restored
+
+
+def test_after_fill_callback_runs_once_per_fill_only(repository):
+    from trading_bot.irl.gate import ExecutionResult
+
+    broker = _broker({"BTC": 0.0, "USDT": 1000.0}, price=100.0)
+    gate = AsyncMock()
+    gate.execute.return_value = ExecutionResult(fill=_buy_fill(), receipt=None)
+    calls: list[float] = []
+    controller = _controller(
+        broker, repository, gate=gate, after_fill=lambda: calls.append(controller.portfolio.cash)
+    )
+
+    async def scenario():
+        await controller.queue.put(_signal("BUY"))
+        await controller.process_next_signal(timeout=1.0)
+        await controller.queue.put(_signal("HOLD"))
+        await controller.process_next_signal(timeout=1.0)
+
+    asyncio.run(scenario())
+
+    assert len(calls) == 1
+    assert calls[0] == controller.portfolio.cash  # portfolio already includes the fill

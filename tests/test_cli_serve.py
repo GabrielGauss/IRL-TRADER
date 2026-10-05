@@ -341,3 +341,32 @@ def test_cmd_serve_refuses_to_start_while_kill_switch_latched(tmp_path, monkeypa
     assert exit_code == 3
     assert "kill_switch.tripped" in caplog.text
     assert not (tmp_path / "audit.log").exists()
+
+
+def test_paper_serve_restores_and_persists_paper_state(tmp_path, monkeypatch):
+    from trading_bot.persistence.paper_state import load_paper_state, save_paper_state
+    from trading_bot.risk.portfolio import PortfolioState, Position
+
+    monkeypatch.setattr(cli, "CcxtBroker", lambda *a, **k: MagicMock(spec=CcxtBroker))
+    state_path = tmp_path / "paper_state.json"
+    portfolio = PortfolioState(
+        cash=899.0,
+        positions={"BTC": Position(symbol="BTC", quantity=0.5, average_entry_price=200.0)},
+    )
+    save_paper_state(state_path, {"USDT": 899.0, "BTC": 0.5}, portfolio)
+
+    runtime = cli._build_serve_runtime(_serve_args_in(tmp_path))
+
+    assert runtime.broker.balances == {"USDT": 899.0, "BTC": 0.5}
+    assert runtime.controller.portfolio == portfolio
+
+    runtime.controller._after_fill()
+    assert load_paper_state(state_path).balances == {"USDT": 899.0, "BTC": 0.5}
+
+
+def test_paper_serve_refuses_corrupt_paper_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "CcxtBroker", lambda *a, **k: MagicMock(spec=CcxtBroker))
+    (tmp_path / "paper_state.json").write_text("{corrupt")
+
+    with pytest.raises(ValueError, match="paper_state"):
+        cli._build_serve_runtime(_serve_args_in(tmp_path))

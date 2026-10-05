@@ -161,6 +161,11 @@ class PaperBroker(Broker):
         self._fee_bps = fee_bps
         self._order_ids = itertools.count(1)
 
+    @property
+    def balances(self) -> dict[str, float]:
+        """Copy of the simulated balances (for persisting across restarts)."""
+        return dict(self._balances)
+
     async def get_balance(self, asset: str) -> float:
         return self._balances.get(asset, 0.0)
 

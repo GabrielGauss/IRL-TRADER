@@ -19,3 +19,4 @@ venv/
 .idea/
 kill_switch.tripped
 *.log
+paper_state.json
