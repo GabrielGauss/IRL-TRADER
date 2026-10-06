@@ -137,10 +137,10 @@ the strategy: it was the guardrail. So:
 
 - **IRL stands on its own.** It runs with no external signal (`MTA_MODE=none`),
   enforces asset and venue mandates, and is free to use: the engine is public
-  at [macropulse-lab/irl](https://github.com/macropulse-lab/irl) under
+  at [horkos-labs/irl](https://github.com/horkos-labs/irl) under
   FSL-1.1-ALv2, with the gateway, SDKs and verifier under MIT. It has one site,
   [irl.macropulse.live](https://irl.macropulse.live), and whitepaper v5.0.
-- **The IRL Gateway** ([macropulse-lab/irl-gateway](https://github.com/macropulse-lab/irl-gateway))
+- **The IRL Gateway** ([horkos-labs/irl-gateway](https://github.com/horkos-labs/irl-gateway))
   gives any MCP agent a trading account it can't misuse: `execute_trade` with a
   sealed rationale, fail closed, kill switch, paper by default. It is on PyPI
   (`pip install irl-gateway`) and in the official MCP Registry.
