@@ -139,7 +139,7 @@ the strategy: it was the guardrail. So:
   enforces asset and venue mandates, and is free to use: the engine is public
   at [norve-labs/irl](https://github.com/norve-labs/irl) under
   FSL-1.1-ALv2, with the gateway, SDKs and verifier under MIT. It has one site,
-  [irl.macropulse.live](https://irl.macropulse.live), and whitepaper v5.0.
+  [norve.dev](https://norve.dev), and whitepaper v5.0.
 - **The IRL Gateway** ([norve-labs/irl-gateway](https://github.com/norve-labs/irl-gateway))
   gives any MCP agent a trading account it can't misuse: `execute_trade` with a
   sealed rationale, fail closed, kill switch, paper by default. It is on PyPI
