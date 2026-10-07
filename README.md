@@ -13,7 +13,7 @@ here, including what wiring it end-to-end uncovered in IRL, is told in
 ## The agent (`trading-bot agent`)
 
 The bot's main mode is now an agent that trades **through
-[irl-gateway](https://github.com/horkos-labs/irl-gateway) over MCP**, the
+[irl-gateway](https://github.com/norve-labs/irl-gateway) over MCP**, the
 same way any third-party AI agent would. It never touches the exchange
 directly. Once a day, just after the daily close:
 
