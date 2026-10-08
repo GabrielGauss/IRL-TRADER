@@ -64,6 +64,12 @@ def add_backtest_commands(
         help="vol_target only: skip rebalances smaller than this fraction of equity",
     )
     wf.add_argument(
+        "--bootstrap-blocks",
+        default="",
+        metavar="B1,B2",
+        help="vol_target only: paired block bootstrap of the stitched curves, block lengths in bars",
+    )
+    wf.add_argument(
         "--param",
         action="append",
         default=[],

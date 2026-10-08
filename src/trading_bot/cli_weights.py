@@ -8,6 +8,8 @@ import dataclasses
 
 import pandas as pd
 
+from trading_bot.backtest.bootstrap import BootstrapResult, paired_block_bootstrap
+from trading_bot.backtest.metrics import annualization_factor
 from trading_bot.backtest.weights import (
     WeightGrid,
     WeightSummary,
@@ -53,7 +55,47 @@ def run_weight_walkforward(args: argparse.Namespace, grid: WeightGrid, df: pd.Da
     print(f"In-sample Sharpe (mean of folds): {report.mean_in_sample_sharpe:.2f}")
     _print_pair(report.oos, report.benchmark)
     print("Verdict: " + weight_verdict(report.oos, report.benchmark))
+    blocks = _parse_blocks(args.bootstrap_blocks)
+    if blocks:
+        _print_bootstrap(
+            [
+                paired_block_bootstrap(
+                    report.oos_returns,
+                    report.benchmark_returns,
+                    block=block,
+                    periods_per_year=annualization_factor(args.interval),
+                )
+                for block in blocks
+            ]
+        )
     return 0
+
+
+def _parse_blocks(text: str) -> list[int]:
+    try:
+        return [int(part) for part in text.split(",") if part.strip()]
+    except ValueError as exc:
+        raise SystemExit(f"--bootstrap-blocks must be comma-separated integers: {exc}") from exc
+
+
+def _print_bootstrap(results: list[BootstrapResult]) -> None:
+    print()
+    print(
+        f"Paired block bootstrap ({results[0].n_boot} resamples; days only, "
+        "not parameter re-selection):"
+    )
+    print(
+        f"{'block':>5}  {'Sharpe diff':>11} {'95% CI':>16} {'P(<=0)':>7}  "
+        f"{'DD ratio':>8} {'95% CI':>14} {'P(>bar)':>8}"
+    )
+    for r in results:
+        print(
+            f"{r.block:>5}  {r.sharpe_diff:>+11.2f} "
+            f"{f'[{r.sharpe_diff_ci[0]:+.2f}, {r.sharpe_diff_ci[1]:+.2f}]':>16} "
+            f"{r.p_sharpe_diff_le_zero:>7.1%}  {r.dd_ratio:>8.2f} "
+            f"{f'[{r.dd_ratio_ci[0]:.2f}, {r.dd_ratio_ci[1]:.2f}]':>14} "
+            f"{r.p_dd_ratio_above_bar:>8.1%}"
+        )
 
 
 def _print_pair(oos: WeightSummary, bench: WeightSummary) -> None:
