@@ -164,6 +164,8 @@ class WeightWalkForwardReport:
     folds: tuple[WeightFold, ...]
     oos: WeightSummary  # stitched across all test windows
     benchmark: WeightSummary  # buy and hold over the same windows, same costs
+    oos_returns: tuple[float, ...] = ()  # stitched per-bar returns, for bootstrapping
+    benchmark_returns: tuple[float, ...] = ()
 
     @property
     def mean_in_sample_sharpe(self) -> float:
@@ -256,6 +258,8 @@ def walk_forward_weights(
         folds=tuple(folds),
         oos=_stitched(oos_returns, folds, interval, initial_balance, oos_side=True),
         benchmark=_stitched(bench_returns, folds, interval, initial_balance, oos_side=False),
+        oos_returns=tuple(float(r) for r in np.concatenate(oos_returns)),
+        benchmark_returns=tuple(float(r) for r in np.concatenate(bench_returns)),
     )
 
 

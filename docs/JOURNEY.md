@@ -125,8 +125,10 @@ deserve real money?
 - **What passed was boring.** A volatility-targeted trend core on daily BTC beat
   buy and hold on a pre-registered, risk-adjusted test (Sharpe 1.03 vs 0.85,
   max drawdown 42% vs 76%) and failed on ETH
-  ([research](research/2026-10-05-vol-target-core.md)). It is a calmer way to
-  hold BTC, not alpha.
+  ([research](research/2026-10-05-vol-target-core.md)). A later block
+  bootstrap showed the Sharpe gap is not significant (95% interval about
+  −0.4 to +0.7) and the drawdown gap only moderately robust. It is a calmer
+  way to hold BTC, with weak evidence even for that, not alpha.
 - **HFT was ruled out** on arithmetic: retail fees (~20 bps a round trip) and
   ~200 ms of latency guarantee losses, and IRL's authorize → bind round trips
   are the opposite of high frequency.

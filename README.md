@@ -180,8 +180,10 @@ the commit history for the smoke-test transcript.
       Sharpe out of sample**; see
       [docs/research/2026-10-05-phase3-walkforward.md](docs/research/2026-10-05-phase3-walkforward.md).
 - [x] Volatility-targeted trend core with a fractional-position backtester
-      judged on the stitched out-of-sample curve. **Passes on BTC** (Sharpe
-      1.03 vs 0.85, max drawdown 42% vs 76%) and fails on ETH; see
+      judged on the stitched out-of-sample curve. **Passes on BTC** on point
+      estimates (Sharpe 1.03 vs 0.85, max drawdown 42% vs 76%) and fails on
+      ETH. A block bootstrap shows the Sharpe gap is not significant and the
+      drawdown gap is only moderately robust; see
       [docs/research/2026-10-05-vol-target-core.md](docs/research/2026-10-05-vol-target-core.md).
 - [x] `trading-bot agent`: the core trading through irl-gateway (MCP) with a
       sealed rationale on every trade; verified end to end against IRL.
