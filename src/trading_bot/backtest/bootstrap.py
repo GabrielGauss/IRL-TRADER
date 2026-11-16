@@ -73,6 +73,12 @@ def _validate(
         raise ValueError(
             f"need two 1-D series of equal length, got {strat.shape} and {bench.shape}"
         )
+    if not (np.isfinite(strat).all() and np.isfinite(bench).all()):
+        raise ValueError("returns must be finite (no NaN or inf)")
+    if (strat <= -1).any() or (bench <= -1).any():
+        raise ValueError("returns must be > -1 (a -100% bar wipes out the equity curve)")
+    if _max_dd(bench) <= 0:
+        raise ValueError("benchmark has no drawdown, so the drawdown ratio is undefined")
     if not 1 <= block <= len(strat) // 2:
         raise ValueError(f"block must be in [1, {len(strat) // 2}], got {block}")
     if n_boot < 1:

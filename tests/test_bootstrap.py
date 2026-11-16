@@ -140,3 +140,33 @@ def test_cli_prints_one_row_per_block(capsys):
     lines = capsys.readouterr().out.strip().splitlines()
     assert "50 resamples" in lines[0]
     assert [line.split()[0] for line in lines[2:]] == ["5", "21"]
+
+
+def test_cli_rejects_non_positive_blocks():
+    from trading_bot.cli_weights import _parse_blocks
+
+    with pytest.raises(SystemExit, match="positive"):
+        _parse_blocks("5,0")
+    with pytest.raises(SystemExit, match="positive"):
+        _parse_blocks("-3")
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_rejects_non_finite_returns(bad):
+    r = _returns(300, 0, 0.02, 1)
+    r[17] = bad
+    with pytest.raises(ValueError, match="finite"):
+        paired_block_bootstrap(r, _returns(300, 0, 0.02, 2), block=10, periods_per_year=365)
+
+
+def test_rejects_total_loss_returns():
+    r = _returns(300, 0, 0.02, 1)
+    r[5] = -1.0
+    with pytest.raises(ValueError, match="-1"):
+        paired_block_bootstrap(r, _returns(300, 0, 0.02, 2), block=10, periods_per_year=365)
+
+
+def test_rejects_benchmark_without_drawdown():
+    flat = np.full(300, 0.001)
+    with pytest.raises(ValueError, match="drawdown"):
+        paired_block_bootstrap(_returns(300, 0, 0.02, 1), flat, block=10, periods_per_year=365)

@@ -44,7 +44,7 @@ def test_signal_payload_rejects_timezone_naive_received_at():
             source="x",
             symbol="BTCUSDT",
             action="BUY",
-            received_at=datetime(2024, 1, 1),  # noqa: DTZ001
+            received_at=datetime(2024, 1, 1),
         )
 
 

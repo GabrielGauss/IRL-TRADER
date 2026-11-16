@@ -21,3 +21,4 @@ kill_switch.tripped
 *.log
 paper_state.json
 data/
+.claude/settings.local.json
