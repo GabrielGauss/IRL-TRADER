@@ -132,7 +132,7 @@ That is 10 strategy-asset variants plus 2 cost-stress reruns. No correction for 
 - **Max drawdown is path-dependent.** Resampling breaks drawdown episodes longer than the block into pieces and reassembles them in a new order, so the bootstrap distribution of max drawdown, and of the drawdown ratio, is an approximation. That is why it is reported at three block lengths. None of them keeps a multi-month bear market intact.
 - The seed is fixed (`DEFAULT_SEED = 20261008` in `src/trading_bot/backtest/bootstrap.py`), with 10,000 resamples per block length. Only days are resampled, not the parameter re-selection.
 
-Conclusion: the BTC drawdown result survives fixing the trend filter, as a weak point estimate, and it comes from the combination of the 200-day filter and volatility sizing. Neither component passes alone. Holding BTC above its 200-day average, sized by volatility, cut the worst out-of-sample drawdown from 76.0% to 43.6%, at the cost of about 40% of the total return (434% vs 749%), and that cut misses the bar in roughly a quarter of resamples. The Sharpe gap is noise.
+Conclusion: the BTC drawdown result survives fixing the trend filter, as a weak point estimate, and it comes from the combination of the 200-day filter and volatility sizing. Neither component passes alone. Holding BTC above its 200-day average, sized by volatility, cut the worst out-of-sample drawdown from 76.0% to 43.6%, at the cost of 42% of the total return (434% vs 749%), and that cut misses the bar in roughly a quarter of resamples. The Sharpe gap is not distinguishable from zero.
 
 Reproduce (one run per row; the seed is the default):
 

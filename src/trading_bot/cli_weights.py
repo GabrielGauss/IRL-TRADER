@@ -19,6 +19,8 @@ from trading_bot.backtest.weights import (
 
 
 def run_weight_walkforward(args: argparse.Namespace, grid: WeightGrid, df: pd.DataFrame) -> int:
+    # Parse before the (slow) walk-forward so a bad flag fails fast.
+    blocks = _parse_blocks(args.bootstrap_blocks)
     if dataclasses.is_dataclass(grid) and hasattr(grid, "interval"):
         grid = dataclasses.replace(grid, interval=args.interval)  # type: ignore[type-var]
     report = walk_forward_weights(
@@ -55,10 +57,9 @@ def run_weight_walkforward(args: argparse.Namespace, grid: WeightGrid, df: pd.Da
     print(f"In-sample Sharpe (mean of folds): {report.mean_in_sample_sharpe:.2f}")
     _print_pair(report.oos, report.benchmark)
     print("Verdict: " + weight_verdict(report.oos, report.benchmark))
-    blocks = _parse_blocks(args.bootstrap_blocks)
     if blocks:
-        _print_bootstrap(
-            [
+        try:
+            results = [
                 paired_block_bootstrap(
                     report.oos_returns,
                     report.benchmark_returns,
@@ -67,15 +68,20 @@ def run_weight_walkforward(args: argparse.Namespace, grid: WeightGrid, df: pd.Da
                 )
                 for block in blocks
             ]
-        )
+        except ValueError as exc:
+            raise SystemExit(f"bootstrap failed: {exc}") from exc
+        _print_bootstrap(results)
     return 0
 
 
 def _parse_blocks(text: str) -> list[int]:
     try:
-        return [int(part) for part in text.split(",") if part.strip()]
+        blocks = [int(part) for part in text.split(",") if part.strip()]
     except ValueError as exc:
         raise SystemExit(f"--bootstrap-blocks must be comma-separated integers: {exc}") from exc
+    if any(block < 1 for block in blocks):
+        raise SystemExit(f"--bootstrap-blocks must be positive integers, got {blocks}")
+    return blocks
 
 
 def _print_bootstrap(results: list[BootstrapResult]) -> None:
