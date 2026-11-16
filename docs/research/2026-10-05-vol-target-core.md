@@ -4,6 +4,8 @@
 
 **Update 2026-10-08:** a bootstrap ([below](#bootstrap-2026-10-08)) shows the BTC Sharpe gap is not distinguishable from zero, and the drawdown gap misses the 75% bar in about a quarter to a third of resamples. The pass stands as a point estimate; the evidence behind it is weak.
 
+**Update 2026-10-09:** with the trend filter fixed in advance ([below](#fixed-trend-filter-2026-10-09)), the drawdown result holds (43.6% vs 76.0%) and comes from the trend filter. Volatility targeting on its own fails both bars.
+
 Phase 3 found no timing edge over buy and hold. This core has a different goal, set before it was run: keep most of buy and hold's upside while cutting its drawdowns. It passes only if its out-of-sample Sharpe is at least buy and hold's **and** its max drawdown is at most 75% of buy and hold's, after costs.
 
 ## Rule
@@ -71,4 +73,32 @@ Reproduce:
 
 ```
 trading-bot walkforward --symbol BTCUSDT --interval 1d --start 2018-01-01 --end 2026-10-01   --train-bars 730 --test-bars 182 --strategy vol_target --bootstrap-blocks 5,21,63
+```
+
+## Fixed trend filter (2026-10-09)
+
+Prompted by a second reader: in fold 13 the walk-forward selected no trend filter and fell with BTC, so is the protection coming from the selection step? This test removes the selection step for the trend filter. `trend_period` is fixed for every fold, and only `vol_period` and `target_vol` are still selected in-sample. **The headline variant, SMA 200, was chosen before the run** (it is the strategy's default and the textbook choice). The other variants are a sensitivity check and do not replace it.
+
+Same data, folds, costs and bootstrap as above. Bootstrap shown for 21-day blocks; the 5- and 63-day results are within ±0.03 of these.
+
+| Trend filter | OOS Sharpe (B&H 0.85) | Max DD (B&H 76.0%) | Return (B&H 749%) | Verdict | Sharpe diff 95% CI | P(diff ≤ 0) | DD ratio 95% CI | P(>bar) |
+| --- | ---: | ---: | ---: | --- | --- | ---: | --- | ---: |
+| **SMA 200 (pre-chosen)** | **0.93** | **43.6%** | **434%** | **passes** | **−0.51 to +0.65** | **41.1%** | **0.41 to 0.98** | **26.3%** |
+| SMA 100 | 1.06 | 29.1% | 534% | passes | −0.39 to +0.78 | 25.8% | 0.37 to 0.91 | 13.4% |
+| SMA 50 | 1.28 | 43.5% | 831% | passes | −0.17 to +0.99 | 8.4% | 0.32 to 0.82 | 6.1% |
+| None (pure vol targeting) | 0.72 | 71.8% | 343% | **fails** | −0.35 to +0.08 | 89.4% | 0.78 to 1.08 | 99.1% |
+
+Reading:
+
+- **The drawdown protection comes from the trend filter, not from volatility targeting.** Without a filter the strategy is almost buy and hold (84% average exposure), its drawdown ratio is 0.94, and it misses the bar in 99% of resamples. With SMA 200 fixed, the drawdown ratio is 0.57, the same as the selected version's 0.55. So the earlier result did not depend on the selection step. In fold 13 the fixed SMA 200 held nothing while BTC fell 28.6%.
+- **Sharpe:** with SMA 200 the gap shrinks to +0.08 and its interval is centered near zero. There is no evidence of better risk-adjusted return.
+- **Shorter filters look better, but that is not a finding.** SMA 50 has the best numbers, but it was picked after looking at all four. With four variants tried, the best one is expected to look good. It would need its own out-of-sample period to count.
+- **Correction to earlier wording:** posts and notes that credited the drawdown gap to "vol targeting" were wrong. The trend filter does the work, and volatility targeting mainly scales the position size.
+
+Conclusion: unchanged in substance, sharper in attribution. Holding BTC above its 200-day average, sized by volatility, cut the worst out-of-sample drawdown from 76.0% to 43.6%, at the cost of about 40% of the total return (434% vs 749%). The Sharpe gap is noise.
+
+Reproduce (one run per value):
+
+```
+trading-bot walkforward --symbol BTCUSDT --interval 1d --start 2018-01-01 --end 2026-10-01   --train-bars 730 --test-bars 182 --strategy vol_target --bootstrap-blocks 5,21,63 --param trend_period=200
 ```
