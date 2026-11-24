@@ -24,7 +24,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from trading_bot.execution.broker import Broker, Fill, OrderSide
+from trading_bot.execution.broker import Broker, Fill, OrderSide, is_definite_rejection
 from trading_bot.execution.router import OrderPlan
 from trading_bot.irl.client import AgentIdentity, IrlClient, IrlDenied, IrlError
 
@@ -136,8 +136,19 @@ class IrlGate:
             fill = await broker.place_order(
                 plan.symbol, plan.side, plan.quantity, client_order_id=client_order_id
             )
-        except Exception:
-            await self._bind(auth.trace_id, exchange_tx_id=client_order_id, status="Rejected")
+        except Exception as exc:
+            if is_definite_rejection(exc):
+                await self._bind(auth.trace_id, exchange_tx_id=client_order_id, status="Rejected")
+            else:
+                # The venue may have executed it (timeout, outage): a Rejected
+                # bind would be final and false. Leave the trace PENDING.
+                logger.error(
+                    "order %s outcome unknown at the venue (%r); IRL trace %s left PENDING, "
+                    "reconcile via /irl/pending",
+                    client_order_id,
+                    exc,
+                    auth.trace_id,
+                )
             raise
 
         final_proof, verification_status, bind_error = await self._bind(

@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
+import ccxt.async_support as ccxt_async
 import pytest
 
-from trading_bot.execution.broker import OrderSide, PaperBroker
+from trading_bot.execution.broker import LocalOrderRejection, OrderSide, PaperBroker
 from trading_bot.execution.router import OrderPlan
 from trading_bot.irl.client import (
     AgentIdentity,
@@ -164,17 +165,54 @@ def test_irl_gate_proceeds_when_only_shadow_blocked():
     assert result.fill is not None
 
 
-def test_irl_gate_binds_rejected_then_reraises_when_order_fails():
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ccxt_async.InsufficientFunds("binance: insufficient balance"),
+        LocalOrderRejection("Insufficient USDT balance"),
+    ],
+)
+def test_irl_gate_binds_rejected_then_reraises_when_the_order_is_refused(exc):
     broker = AsyncMock()
-    broker.place_order.side_effect = RuntimeError("exchange down")
+    broker.place_order.side_effect = exc
     client = _irl_client()
 
-    with pytest.raises(RuntimeError, match="exchange down"):
+    with pytest.raises(type(exc)):
         asyncio.run(_gate(client).execute(broker, _BUY, price=100.0))
 
     bind_kwargs = client.bind.await_args.kwargs
     assert bind_kwargs["execution_status"] == "Rejected"
     assert bind_kwargs["exchange_tx_id"].startswith("irl-")
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ccxt_async.RequestTimeout("timed out"),
+        ccxt_async.DuplicateOrderId("order id exists"),
+        ValueError("could not convert string to float: ''"),
+        RuntimeError("exchange down"),
+    ],
+)
+def test_irl_gate_leaves_trace_pending_when_the_venue_outcome_is_unknown(exc):
+    broker = AsyncMock()
+    broker.place_order.side_effect = exc
+    client = _irl_client()
+
+    with pytest.raises(type(exc)):
+        asyncio.run(_gate(client).execute(broker, _BUY, price=100.0))
+
+    client.bind.assert_not_awaited()
+
+
+def test_paper_broker_refusals_are_definite_rejections():
+    from trading_bot.execution.broker import is_definite_rejection
+
+    assert is_definite_rejection(LocalOrderRejection("x"))
+    assert is_definite_rejection(ccxt_async.InvalidOrder("x"))
+    assert not is_definite_rejection(ccxt_async.InvalidNonce("x"))
+    assert not is_definite_rejection(ccxt_async.DDoSProtection("x"))
+    assert not is_definite_rejection(ValueError("x"))
 
 
 def test_irl_gate_returns_fill_even_when_bind_fails():

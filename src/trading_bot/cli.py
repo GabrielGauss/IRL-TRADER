@@ -496,8 +496,9 @@ CANARY_NOTIONAL = 1.0
 
 def cmd_irl_canary(args: argparse.Namespace) -> int:
     """End-to-end IRL check that never trades: authorize a tiny intent, then
-    bind it as Rejected, which closes the trace (IRL seals rejections as
-    MATCHED). Exercises auth, agent/model hash, heartbeat, MTA verification,
+    bind it as Rejected, which closes the trace (recorded as REJECTED since
+    irl-engine migration 031; MATCHED before). Exercises auth, agent/model
+    hash, heartbeat, MTA verification,
     policy and the trace + bind DB writes -- the paths that silently broke in
     2026. Exit 0 = healthy, 1 = IRL failure, 2 = configuration error."""
     settings = load_irl_settings()
