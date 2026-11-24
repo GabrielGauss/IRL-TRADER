@@ -24,6 +24,20 @@ from trading_bot.exchange.order_side import OrderSide
 __all__ = ["Broker", "CcxtBroker", "Fill", "OrderSide", "PaperBroker"]
 
 
+def is_definite_rejection(exc: BaseException) -> bool:
+    """True only when the order certainly did not execute.
+
+    The venue answered with an error (ccxt ``ExchangeError``) or the order
+    never left the process (``ValueError``: local validation, paper balance).
+    Timeouts, outages and empty responses (ccxt ``OperationFailed``, which
+    includes ``NetworkError``) and anything unexpected are ambiguous: the venue
+    may have accepted the order, so it must not be recorded as rejected.
+    """
+    if isinstance(exc, ccxt_async.OperationFailed):
+        return False
+    return isinstance(exc, (ccxt_async.ExchangeError, ValueError))
+
+
 @dataclass(frozen=True)
 class Fill:
     order_id: str

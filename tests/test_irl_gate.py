@@ -164,17 +164,33 @@ def test_irl_gate_proceeds_when_only_shadow_blocked():
     assert result.fill is not None
 
 
-def test_irl_gate_binds_rejected_then_reraises_when_order_fails():
+def test_irl_gate_binds_rejected_then_reraises_when_the_venue_rejects():
+    import ccxt.async_support as ccxt_async
+
     broker = AsyncMock()
-    broker.place_order.side_effect = RuntimeError("exchange down")
+    broker.place_order.side_effect = ccxt_async.InsufficientFunds("binance: insufficient balance")
     client = _irl_client()
 
-    with pytest.raises(RuntimeError, match="exchange down"):
+    with pytest.raises(ccxt_async.InsufficientFunds):
         asyncio.run(_gate(client).execute(broker, _BUY, price=100.0))
 
     bind_kwargs = client.bind.await_args.kwargs
     assert bind_kwargs["execution_status"] == "Rejected"
     assert bind_kwargs["exchange_tx_id"].startswith("irl-")
+
+
+def test_irl_gate_leaves_trace_pending_when_the_venue_outcome_is_unknown():
+    import ccxt.async_support as ccxt_async
+
+    for exc in (ccxt_async.RequestTimeout("timed out"), RuntimeError("exchange down")):
+        broker = AsyncMock()
+        broker.place_order.side_effect = exc
+        client = _irl_client()
+
+        with pytest.raises(type(exc)):
+            asyncio.run(_gate(client).execute(broker, _BUY, price=100.0))
+
+        client.bind.assert_not_awaited()
 
 
 def test_irl_gate_returns_fill_even_when_bind_fails():
