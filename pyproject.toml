@@ -20,7 +20,7 @@ trading-bot = "trading_bot.cli:main"
 # `trading-bot agent` talks to irl-gateway over MCP.
 agent = [
     "mcp>=2.3,<3",
-    "irl-gateway>=0.2,<0.3",
+    "irl-gateway>=0.3.2,<0.4",
 ]
 dev = [
     "pytest>=8.0",
