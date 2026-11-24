@@ -27,15 +27,22 @@ __all__ = ["Broker", "CcxtBroker", "Fill", "OrderSide", "PaperBroker"]
 def is_definite_rejection(exc: BaseException) -> bool:
     """True only when the order certainly did not execute.
 
-    The venue answered with an error (ccxt ``ExchangeError``) or the order
-    never left the process (``ValueError``: local validation, paper balance).
-    Timeouts, outages and empty responses (ccxt ``OperationFailed``, which
-    includes ``NetworkError``) and anything unexpected are ambiguous: the venue
-    may have accepted the order, so it must not be recorded as rejected.
+    Definite: the venue answered with an error (ccxt ``ExchangeError``), or the
+    paper broker refused the order before placing it (``LocalOrderRejection``).
+    Everything else is ambiguous and must not be recorded as rejected, because
+    the venue may have accepted the order: timeouts, outages and empty
+    responses (ccxt ``OperationFailed``, which includes ``NetworkError``);
+    ``DuplicateOrderId``; a plain ``ValueError`` (it may come from parsing the
+    response of an accepted order); anything unexpected. Keep in sync with
+    irl_gateway.brokers.is_definite_rejection.
     """
-    if isinstance(exc, ccxt_async.OperationFailed):
+    if isinstance(exc, (ccxt_async.OperationFailed, ccxt_async.DuplicateOrderId)):
         return False
-    return isinstance(exc, (ccxt_async.ExchangeError, ValueError))
+    return isinstance(exc, (ccxt_async.ExchangeError, LocalOrderRejection))
+
+
+class LocalOrderRejection(ValueError):
+    """The paper broker refused the order before placing it."""
 
 
 @dataclass(frozen=True)
@@ -195,7 +202,7 @@ class PaperBroker(Broker):
         client_order_id: str | None = None,
     ) -> Fill:
         if quantity <= 0:
-            raise ValueError("quantity must be positive")
+            raise LocalOrderRejection("quantity must be positive")
         base_asset, quote_asset = _split_symbol(symbol)
 
         mid_price = await self.get_price(symbol)
@@ -208,7 +215,7 @@ class PaperBroker(Broker):
             available_quote = self._balances.get(quote_asset, 0.0)
             total_cost = notional + fee
             if total_cost > available_quote:
-                raise ValueError(
+                raise LocalOrderRejection(
                     f"Insufficient {quote_asset} balance: need {total_cost}, have {available_quote}"
                 )
             self._balances[quote_asset] = available_quote - total_cost
@@ -216,7 +223,7 @@ class PaperBroker(Broker):
         else:
             available_base = self._balances.get(base_asset, 0.0)
             if quantity > available_base:
-                raise ValueError(
+                raise LocalOrderRejection(
                     f"Insufficient {base_asset} balance: need {quantity}, have {available_base}"
                 )
             self._balances[base_asset] = available_base - quantity
