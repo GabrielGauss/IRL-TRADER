@@ -107,7 +107,19 @@ async def run_cycle(
         f"so {size_text}."
     )
     outcome = await tools.execute_trade(args)
-    logger.info("agent %s: %s", args["side"], outcome.get("status"))
+    status = outcome.get("status")
+    if status == "unknown":
+        # The venue neither confirmed nor rejected the order: it may have
+        # executed. The gateway leaves the IRL trace PENDING and the operator
+        # reconciles it; vps-ops pages on this too.
+        logger.warning(
+            "agent %s: outcome unknown, reconcile client order id %s (IRL trace %s)",
+            args["side"],
+            outcome.get("client_order_id"),
+            outcome.get("trace_id"),
+        )
+    else:
+        logger.info("agent %s: %s", args["side"], status)
     return report(str(args["side"]), str(outcome.get("message", "")), outcome)
 
 
