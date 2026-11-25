@@ -4,6 +4,7 @@ tools, and the MCP tool wrapper."""
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -66,7 +67,13 @@ class FakeTools:
 
     async def execute_trade(self, arguments: dict[str, Any]) -> dict[str, Any]:
         self.trades.append(arguments)
-        return {"status": self.status, "message": "ok", "trace_id": "t1", "verdict": "MATCHED"}
+        return {
+            "status": self.status,
+            "message": "ok",
+            "client_order_id": "irl-c1",
+            "trace_id": "t1",
+            "verdict": "MATCHED",
+        }
 
 
 # ---- decision ------------------------------------------------------------------
@@ -139,6 +146,21 @@ def test_buys_up_to_the_target_with_cash_headroom_and_a_rationale():
     assert "trailing 730 completed days" in trade["rationale"]
     assert "Current weight 0.00" in trade["rationale"]
     assert report.trade["verdict"] == "MATCHED"
+
+
+def test_unknown_outcome_is_logged_as_a_warning_for_reconciliation(caplog):
+    df = _uptrend()
+    tools = FakeTools({"USDT": 1_000.0}, price=float(df["close"].iloc[-1]), status="unknown")
+
+    with caplog.at_level(logging.INFO, logger="trading_bot.agent.runner"):
+        report = _cycle(tools, df)
+
+    assert report.action == "buy"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "outcome unknown" in warnings[0].getMessage()
+    assert "client order id irl-c1" in warnings[0].getMessage()
+    assert "IRL trace t1" in warnings[0].getMessage()
 
 
 def test_holds_inside_the_band():
