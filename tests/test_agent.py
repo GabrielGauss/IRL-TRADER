@@ -67,7 +67,13 @@ class FakeTools:
 
     async def execute_trade(self, arguments: dict[str, Any]) -> dict[str, Any]:
         self.trades.append(arguments)
-        return {"status": self.status, "message": "ok", "trace_id": "t1", "verdict": "MATCHED"}
+        return {
+            "status": self.status,
+            "message": "ok",
+            "client_order_id": "irl-c1",
+            "trace_id": "t1",
+            "verdict": "MATCHED",
+        }
 
 
 # ---- decision ------------------------------------------------------------------
@@ -153,6 +159,7 @@ def test_unknown_outcome_is_logged_as_a_warning_for_reconciliation(caplog):
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "outcome unknown" in warnings[0].getMessage()
+    assert "client order id irl-c1" in warnings[0].getMessage()
     assert "IRL trace t1" in warnings[0].getMessage()
 
 
